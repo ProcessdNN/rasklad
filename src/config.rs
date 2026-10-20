@@ -125,9 +125,52 @@ mod imp {
         let _ = scheduled_task(false);
         match method {
             AutostartMethod::None => Ok(()),
-            AutostartMethod::RegistryRun => registry(true),
-            AutostartMethod::StartupFolder => startup_folder(true),
-            AutostartMethod::ScheduledTask => scheduled_task(true),
+            AutostartMethod::RegistryRun => registry(true).and(verify_registry()),
+            AutostartMethod::StartupFolder => {
+                startup_folder(true).and_then(|_| match startup_lnk_path() {
+                    Ok(p) if p.exists() => Ok(()),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "shortcut was not created",
+                    )),
+                })
+            }
+            AutostartMethod::ScheduledTask => scheduled_task(true).and(verify_task()),
+        }
+    }
+
+    /// Read the Run value back to prove the entry is really there.
+    fn verify_registry() -> io::Result<()> {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let key = hkcu.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")?;
+        let value: String = key.get_value("rasklad")?;
+        if value.contains("rasklad") {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Run entry missing after write",
+            ))
+        }
+    }
+
+    /// `schtasks /Query` succeeding proves the task exists.
+    fn verify_task() -> io::Result<()> {
+        use std::process::Command;
+
+        let out = Command::new("schtasks")
+            .args(["/Query", "/TN", "Rasklad"])
+            .output()?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "task missing after creation",
+            ))
         }
     }
 

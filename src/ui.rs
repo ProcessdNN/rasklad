@@ -19,28 +19,99 @@ use tray_icon::{MouseButton, TrayIconEvent};
 
 use crate::assets;
 use crate::config::{self, AutostartMethod, Config};
+use crate::elevation;
 use crate::hotkey::Hotkey;
 use crate::shared::{CaptureResult, Shared};
 use crate::worker::{self, menu_id, WorkerCmd};
 use crate::winshow;
 
+/// The standard egui toggle switch (as in the egui demo): an animated
+/// pill with a sliding knob.
+fn toggle_ui(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let desired_size = ui.spacing().interact_size.y * egui::vec2(2.0, 1.0);
+    let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
+    });
+
+    if ui.is_rect_visible(rect) {
+        let how_on = ui.ctx().animate_bool(response.id, *on);
+        let visuals = ui.style().interact_selectable(&response, *on);
+        let rect = rect.expand(visuals.expansion);
+        let radius = 0.5 * rect.height();
+        ui.painter().rect(
+            rect,
+            radius,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let circle_x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
+        let center = egui::pos2(circle_x, rect.center().y);
+        ui.painter()
+            .circle(center, 0.75 * radius, visuals.bg_fill, visuals.fg_stroke);
+    }
+    response
+}
+
+/// Hyperlink-styled label: light gray, easing to white on hover.
+fn link_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let font_id = egui::FontId::proportional(13.5);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+    let t = ui.ctx().animate_value_with_time(
+        response.id,
+        if response.hovered() { 1.0 } else { 0.0 },
+        0.15,
+    );
+    let gray = (175.0 + (245.0 - 175.0) * t) as u8;
+    let color = egui::Color32::from_gray(gray);
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .text(rect.min, egui::Align2::LEFT_TOP, text, font_id, color);
+        let y = rect.bottom() - 1.0;
+        ui.painter().line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            egui::Stroke::new(1.0_f32, color),
+        );
+    }
+    response
+}
+
 pub struct App {
     shared: Arc<Shared>,
     cmds: Sender<WorkerCmd>,
     worker: Option<JoinHandle<()>>,
+    icon: Arc<egui::IconData>,
+    elevated: bool,
     recording: bool,
     autostart_open: bool,
+    autostart_sel: AutostartMethod,
     autostart_status: Option<String>,
 }
 
 impl App {
-    fn new(shared: Arc<Shared>, cmds: Sender<WorkerCmd>, worker: JoinHandle<()>) -> Self {
+    fn new(
+        shared: Arc<Shared>,
+        cmds: Sender<WorkerCmd>,
+        worker: JoinHandle<()>,
+        icon: Arc<egui::IconData>,
+    ) -> Self {
         Self {
             shared,
             cmds,
             worker: Some(worker),
+            icon,
+            elevated: elevation::is_elevated(),
             recording: false,
             autostart_open: false,
+            autostart_sel: AutostartMethod::RegistryRun,
             autostart_status: None,
         }
     }
@@ -79,6 +150,64 @@ impl App {
             let _ = h.join();
         }
         std::process::exit(0);
+    }
+
+    fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("autostart-window"),
+            egui::ViewportBuilder::default()
+                .with_title("Autostart")
+                .with_inner_size([300.0, 110.0])
+                .with_resizable(false)
+                .with_icon(self.icon.clone()),
+            |ctx, _class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    self.autostart_open = false;
+                }
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.add_space(2.0);
+
+                    let sel = if cfg.autostart != AutostartMethod::None {
+                        cfg.autostart
+                    } else {
+                        self.autostart_sel
+                    };
+                    let mut on = cfg.autostart != AutostartMethod::None;
+
+                    ui.horizontal(|ui| {
+                        ui.label("Autostart");
+                        if toggle_ui(ui, &mut on).changed() {
+                            self.set_autostart(if on { sel } else { AutostartMethod::None });
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Method:");
+                        ui.add_enabled_ui(on, |ui| {
+                            egui::ComboBox::from_id_salt("autostart-method")
+                                .selected_text(sel.title())
+                                .show_ui(ui, |ui| {
+                                    for m in AutostartMethod::ALL {
+                                        if ui.selectable_label(sel == m, m.title()).clicked() {
+                                            self.autostart_sel = m;
+                                            if on {
+                                                self.set_autostart(m);
+                                            }
+                                        }
+                                    }
+                                });
+                        });
+                    });
+
+                    if let Some(err) = &self.autostart_status {
+                        ui.add_space(6.0);
+                        ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
+                    }
+                });
+            },
+        );
     }
 }
 
@@ -119,11 +248,14 @@ impl eframe::App for App {
             ui.add_space(8.0);
 
             let mut enabled = cfg.enabled;
-            if ui.checkbox(&mut enabled, "Enabled").changed() {
-                worker::set_enabled(&self.shared, &self.cmds, enabled);
-            }
+            ui.horizontal(|ui| {
+                if toggle_ui(ui, &mut enabled).changed() {
+                    worker::set_enabled(&self.shared, &self.cmds, enabled);
+                }
+                ui.label(if enabled { "Enabled" } else { "Disabled" });
+            });
 
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label("Hotkey:");
                 ui.monospace(cfg.hotkey.display());
@@ -144,42 +276,26 @@ impl eframe::App for App {
             ui.separator();
             ui.add_space(4.0);
             ui.label("Lives in the system tray. Closing this window keeps it running.");
-            ui.label("Default: Caps Lock switches layout; Shift+Caps still toggles caps.");
-        });
-
-        // Autostart settings sub-window.
-        if self.autostart_open {
-            let method = cfg.autostart;
-            let mut open = self.autostart_open;
-            egui::Window::new("Autostart")
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label("Run rasklad when you log in — pick one method:");
-                    egui::ComboBox::from_id_salt("autostart-method")
-                        .selected_text(method.title())
-                        .show_ui(ui, |ui| {
-                            for m in AutostartMethod::ALL {
-                                if ui.selectable_label(method == m, m.title()).clicked() {
-                                    self.set_autostart(m);
-                                }
-                            }
-                        });
-                    ui.add_space(8.0);
-                    ui.label(format!("Active: {}", method.title()));
-                    if ui.button("Turn off").clicked() {
-                        self.set_autostart(AutostartMethod::None);
-                    }
-                    if let Some(err) = &self.autostart_status {
-                        ui.colored_label(egui::Color32::RED, err);
+            if self.elevated {
+                ui.label("Default: Caps Lock switches layout; Shift+Caps still toggles caps.");
+            } else {
+                ui.label("Not running as administrator — layout switching");
+                ui.horizontal(|ui| {
+                    ui.label("won't work in elevated windows.");
+                    if link_label(ui, "relaunch as admin").clicked()
+                        && elevation::relaunch_elevated()
+                    {
+                        self.quit();
                     }
                 });
-            self.autostart_open = open;
+            }
+        });
+
+        if self.autostart_open {
+            self.autostart_viewport(ctx, &cfg);
         }
 
-        // Repaint periodically so capture results and checkbox state stay
+        // Repaint periodically so capture results and toggle state stay
         // fresh; tray/menu events additionally trigger request_repaint().
         ctx.request_repaint_after(Duration::from_millis(200));
     }
@@ -254,18 +370,18 @@ pub fn run(
     visible: bool,
 ) {
     let (rgba, w, h) = assets::icon_rgba();
-    let icon = egui::IconData {
+    let icon = Arc::new(egui::IconData {
         rgba,
         width: w,
         height: h,
-    };
+    });
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([330.0, 175.0])
+            .with_inner_size([340.0, 200.0])
             .with_resizable(false)
             .with_visible(visible)
-            .with_icon(Arc::new(icon)),
+            .with_icon(icon.clone()),
         ..Default::default()
     };
 
@@ -275,7 +391,7 @@ pub fn run(
         options,
         Box::new(move |cc| {
             spawn_events(cc.egui_ctx.clone(), shared.clone(), app_cmds, show_event.0 as usize);
-            Ok(Box::new(App::new(shared, cmds, worker)))
+            Ok(Box::new(App::new(shared, cmds, worker, icon)))
         }),
     );
 }

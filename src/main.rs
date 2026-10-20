@@ -7,6 +7,8 @@ mod shared;
 mod vk;
 
 #[cfg(windows)]
+mod elevation;
+#[cfg(windows)]
 mod hook;
 #[cfg(windows)]
 mod instance;
