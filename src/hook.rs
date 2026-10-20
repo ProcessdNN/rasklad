@@ -1,7 +1,9 @@
 //! Low-level keyboard hook (WH_KEYBOARD_LL) running on the worker thread's
 //! message loop. It watches for the configured hotkey, suppresses it and
-//! triggers a layout switch. Events flagged LLKHF_INJECTED (our own
-//! SendInput keystrokes) are always passed through.
+//! triggers a layout switch. Only keystrokes we injected ourselves
+//! (tagged in dwExtraInfo by switcher) are ignored — injected input from
+//! other sources (VMs, RDP, AutoHotkey) is treated as real keys, so the
+//! hotkey also works on remote/virtual machines.
 
 #![cfg(windows)]
 
@@ -62,7 +64,9 @@ fn update_mods(vk_code: u32, down: bool) {
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        if (kb.flags & LLKHF_INJECTED).0 == 0 {
+        let self_injected = (kb.flags & LLKHF_INJECTED).0 != 0
+            && kb.dwExtraInfo == switcher::INJECTED_TAG;
+        if !self_injected {
             if let Some(shared) = SHARED.get() {
                 let vk_code = kb.vkCode;
                 let down = wparam.0 == WM_KEYDOWN as usize

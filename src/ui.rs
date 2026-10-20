@@ -91,6 +91,7 @@ pub struct App {
     icon: Arc<egui::IconData>,
     elevated: bool,
     recording: bool,
+    admin_status: Option<String>,
     autostart_open: bool,
     autostart_sel: AutostartMethod,
     autostart_status: Option<String>,
@@ -110,6 +111,7 @@ impl App {
             icon,
             elevated: elevation::is_elevated(),
             recording: false,
+            admin_status: None,
             autostart_open: false,
             autostart_sel: AutostartMethod::RegistryRun,
             autostart_status: None,
@@ -239,7 +241,9 @@ impl eframe::App for App {
             ui.horizontal(|ui| {
                 ui.heading("rasklad");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button("⋯", |ui| {
+                    // U+22EF is missing from egui's bundled font — use
+                    // the plain ellipsis so the button doesn't draw tofu.
+                    ui.menu_button("…", |ui| {
                         if ui.button("Autostart…").clicked() {
                             self.autostart_open = true;
                             ui.close_menu();
@@ -266,7 +270,11 @@ impl eframe::App for App {
                 ui.label("Hotkey:");
                 ui.monospace(cfg.hotkey.display());
                 if self.recording {
-                    ui.label("press keys… (Esc to cancel)");
+                    ui.label("press keys…");
+                    if ui.button("Cancel").clicked() {
+                        self.recording = false;
+                        self.shared.capturing.store(false, Ordering::SeqCst);
+                    }
                 } else {
                     if ui.button("Record").clicked() {
                         self.recording = true;
@@ -286,12 +294,20 @@ impl eframe::App for App {
                 ui.label("Not running as administrator — layout switching");
                 ui.horizontal(|ui| {
                     ui.label("won't work in elevated windows.");
-                    if link_label(ui, "relaunch as admin").clicked()
-                        && elevation::relaunch_elevated()
-                    {
-                        self.quit();
+                    if link_label(ui, "relaunch as admin").clicked() {
+                        if elevation::relaunch_elevated() {
+                            self.quit();
+                        } else {
+                            self.admin_status = Some(
+                                "relaunch failed — UAC prompt was declined or blocked"
+                                    .to_string(),
+                            );
+                        }
                     }
                 });
+                if let Some(err) = &self.admin_status {
+                    ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
+                }
             }
         });
 

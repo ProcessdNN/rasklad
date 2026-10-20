@@ -7,6 +7,11 @@
 
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
+/// dwExtraInfo tag stamped on every keystroke we inject, so the keyboard
+/// hook can tell our own synthetic input from injected input coming from
+/// elsewhere (VMs, RDP, AutoHotkey) — which we deliberately do NOT ignore.
+pub const INJECTED_TAG: usize = 0x524B4C44; // "RKLD"
+
 #[derive(Clone, Copy)]
 enum Combo {
     AltShift,
@@ -74,7 +79,7 @@ fn send(seq: &[(u16, bool)]) {
                         KEYEVENTF_KEYUP
                     },
                     time: 0,
-                    dwExtraInfo: 0,
+                    dwExtraInfo: INJECTED_TAG,
                 },
             },
         })
