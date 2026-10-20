@@ -56,6 +56,46 @@ impl<'de> Deserialize<'de> for AutostartMethod {
     }
 }
 
+/// Which modifier+Caps combo toggles Caps Lock mode. The bare Caps key is
+/// normally the layout-switch hotkey, so caps mode itself needs a combo —
+/// Shift+Caps Lock is the Windows default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CapsCombo {
+    Off,
+    #[default]
+    Shift,
+    Ctrl,
+    Alt,
+    Win,
+}
+
+impl CapsCombo {
+    pub const ALL: [Self; 5] = [Self::Shift, Self::Ctrl, Self::Alt, Self::Win, Self::Off];
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Off => "Off (Caps never toggles)",
+            Self::Shift => "Shift+Caps Lock",
+            Self::Ctrl => "Ctrl+Caps Lock",
+            Self::Alt => "Alt+Caps Lock",
+            Self::Win => "Win+Caps Lock",
+        }
+    }
+
+    /// Does this combo match the given held modifiers?
+    /// (`Off` never matches — it means "no combo toggles caps".)
+    pub fn matches(&self, m: &crate::hotkey::Modifiers) -> bool {
+        let (ctrl, alt, shift, win) = match self {
+            Self::Off => return false,
+            Self::Shift => (false, false, true, false),
+            Self::Ctrl => (true, false, false, false),
+            Self::Alt => (false, true, false, false),
+            Self::Win => (false, false, false, true),
+        };
+        m.ctrl == ctrl && m.alt == alt && m.shift == shift && m.win == win
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Master on/off switch for the layout-switch hotkey.
@@ -66,6 +106,9 @@ pub struct Config {
     /// Which autostart mechanism is currently active, if any.
     #[serde(default)]
     pub autostart: AutostartMethod,
+    /// Which modifier+Caps combo toggles Caps Lock mode.
+    #[serde(default)]
+    pub caps_combo: CapsCombo,
 }
 
 fn default_true() -> bool {
@@ -78,6 +121,7 @@ impl Default for Config {
             enabled: true,
             hotkey: Hotkey::default(),
             autostart: AutostartMethod::None,
+            caps_combo: CapsCombo::Shift,
         }
     }
 }

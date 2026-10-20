@@ -18,7 +18,7 @@ use tray_icon::menu::MenuEvent;
 use tray_icon::{MouseButton, TrayIconEvent};
 
 use crate::assets;
-use crate::config::{self, AutostartMethod, Config};
+use crate::config::{self, AutostartMethod, CapsCombo, Config};
 use crate::elevation;
 use crate::hotkey::Hotkey;
 use crate::shared::{CaptureResult, Shared};
@@ -95,6 +95,7 @@ pub struct App {
     autostart_open: bool,
     autostart_sel: AutostartMethod,
     autostart_status: Option<String>,
+    advanced_open: bool,
 }
 
 impl App {
@@ -115,6 +116,7 @@ impl App {
             autostart_open: false,
             autostart_sel: AutostartMethod::RegistryRun,
             autostart_status: None,
+            advanced_open: false,
         }
     }
 
@@ -145,6 +147,17 @@ impl App {
         }
     }
 
+    fn set_caps_combo(&self, combo: CapsCombo) {
+        let next = {
+            let cfg = self.shared.config.lock().unwrap();
+            let mut next = cfg.clone();
+            next.caps_combo = combo;
+            next
+        };
+        let _ = config::save(&next);
+        *self.shared.config.lock().unwrap() = next;
+    }
+
     fn quit(&mut self) {
         let _ = self.cmds.send(WorkerCmd::Shutdown);
         worker::notify(&self.shared);
@@ -154,17 +167,59 @@ impl App {
         std::process::exit(0);
     }
 
-    fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
-        // Pop next to the main window instead of wherever the WM puts it.
+    /// Center a child window builder on the main window.
+    fn child_builder(
+        &self,
+        ctx: &egui::Context,
+        title: &str,
+        size: [f32; 2],
+    ) -> egui::ViewportBuilder {
         let mut builder = egui::ViewportBuilder::default()
-            .with_title("Autostart")
-            .with_inner_size([300.0, 110.0])
+            .with_title(title)
+            .with_inner_size(size)
             .with_resizable(false)
             .with_icon(self.icon.clone());
         if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
             let c = outer.center();
-            builder = builder.with_position(egui::pos2(c.x - 150.0, c.y - 55.0));
+            builder = builder
+                .with_position(egui::pos2(c.x - size[0] / 2.0, c.y - size[1] / 2.0));
         }
+        builder
+    }
+
+    fn advanced_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
+        let builder = self.child_builder(ctx, "Advanced settings", [300.0, 100.0]);
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("advanced-window"),
+            builder,
+            |ctx, _class| {
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    self.advanced_open = false;
+                }
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Label::new("Caps Lock toggles with:").selectable(true));
+                        egui::ComboBox::from_id_salt("caps-combo")
+                            .selected_text(cfg.caps_combo.title())
+                            .show_ui(ui, |ui| {
+                                for c in CapsCombo::ALL {
+                                    if ui.selectable_label(cfg.caps_combo == c, c.title()).clicked()
+                                    {
+                                        self.set_caps_combo(c);
+                                    }
+                                }
+                            });
+                    });
+                });
+            },
+        );
+    }
+
+    fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
+        // Pop next to the main window instead of wherever the WM puts it.
+        let builder = self.child_builder(ctx, "Autostart", [300.0, 110.0]);
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("autostart-window"),
             builder,
@@ -248,6 +303,11 @@ impl eframe::App for App {
                             self.autostart_open = true;
                             ui.close_menu();
                         }
+                        if ui.button("Advanced…").clicked() {
+                            self.advanced_open = true;
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         if ui.button("Exit").clicked() {
                             self.quit();
                         }
@@ -317,6 +377,9 @@ impl eframe::App for App {
 
         if self.autostart_open {
             self.autostart_viewport(ctx, &cfg);
+        }
+        if self.advanced_open {
+            self.advanced_viewport(ctx, &cfg);
         }
 
         // Repaint periodically so capture results and toggle state stay

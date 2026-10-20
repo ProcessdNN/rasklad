@@ -50,6 +50,11 @@ pub fn switch_layout() {
     }
 }
 
+/// Inject a single key tap (down+up), tagged as ours.
+pub fn tap_key(vk: u32) {
+    send(&[(vk as u16, true), (vk as u16, false)]);
+}
+
 /// Press mods, tap `key`, release mods.
 fn send_combo(mods: &[u16], key: u16) {
     let mut seq = Vec::with_capacity(2 + mods.len() * 2);

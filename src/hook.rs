@@ -16,6 +16,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::config::CapsCombo;
 use crate::hotkey::{Hotkey, Modifiers};
 use crate::shared::{CaptureResult, Shared};
 use crate::switcher;
@@ -128,6 +129,19 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                             TRIGGERED.with(|t| t.set(vk_code));
                             switcher::switch_layout();
                         }
+                        return LRESULT(1);
+                    }
+                    // Caps-mode combo (e.g. Shift+Caps): the press is
+                    // swallowed and a synthetic bare Caps is injected
+                    // instead — tagged so this hook ignores it.
+                    let caps = {
+                        let cfg = shared.config.lock().unwrap();
+                        cfg.caps_combo != CapsCombo::Off
+                            && vk_code == vk::VK_CAPITAL
+                            && cfg.caps_combo.matches(&mods_for(vk_code))
+                    };
+                    if caps {
+                        switcher::tap_key(vk::VK_CAPITAL);
                         return LRESULT(1);
                     }
                 } else if vk_code == triggered {
