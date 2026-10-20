@@ -193,20 +193,20 @@ impl App {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.label("Method:");
-                        ui.add_enabled_ui(on, |ui| {
-                            egui::ComboBox::from_id_salt("autostart-method")
-                                .selected_text(sel.title())
-                                .show_ui(ui, |ui| {
-                                    for m in AutostartMethod::ALL {
-                                        if ui.selectable_label(sel == m, m.title()).clicked() {
-                                            self.autostart_sel = m;
-                                            if on {
-                                                self.set_autostart(m);
-                                            }
+                        // Always enabled: pick the method first, then flip
+                        // the toggle — or switch methods while already on.
+                        egui::ComboBox::from_id_salt("autostart-method")
+                            .selected_text(sel.title())
+                            .show_ui(ui, |ui| {
+                                for m in AutostartMethod::ALL {
+                                    if ui.selectable_label(sel == m, m.title()).clicked() {
+                                        self.autostart_sel = m;
+                                        if on {
+                                            self.set_autostart(m);
                                         }
                                     }
-                                });
-                        });
+                                }
+                            });
                     });
 
                     if let Some(err) = &self.autostart_status {
@@ -238,8 +238,8 @@ impl eframe::App for App {
         let cfg = self.config();
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            // No in-window title — the title bar already says "Rasklad".
             ui.horizontal(|ui| {
-                ui.heading("rasklad");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // U+22EF is missing from egui's bundled font — use
                     // the plain ellipsis so the button doesn't draw tofu.
@@ -254,7 +254,7 @@ impl eframe::App for App {
                     });
                 });
             });
-            ui.label("Switch keyboard layout with a custom hotkey.");
+            ui.add(egui::Label::new("Switch keyboard layout with a custom hotkey.").selectable(true));
             ui.add_space(8.0);
 
             let mut enabled = cfg.enabled;
@@ -289,11 +289,15 @@ impl eframe::App for App {
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(4.0);
-            ui.label("Lives in the system tray. Closing this window keeps it running.");
+            ui.add(egui::Label::new(
+                "Lives in the system tray. Closing this window keeps it running.",
+            ).selectable(true));
             if !self.elevated {
-                ui.label("Not running as administrator — layout switching");
+                ui.add(egui::Label::new(
+                    "Not running as administrator — layout switching",
+                ).selectable(true));
                 ui.horizontal(|ui| {
-                    ui.label("won't work in elevated windows.");
+                    ui.add(egui::Label::new("won't work in elevated windows.").selectable(true));
                     if link_label(ui, "relaunch as admin").clicked() {
                         if elevation::relaunch_elevated() {
                             self.quit();
@@ -396,9 +400,14 @@ pub fn run(
         height: h,
     });
 
+    // The admin warning takes ~60px at the bottom — don't reserve it
+    // when running elevated.
+    let height = if elevation::is_elevated() { 140.0 } else { 200.0 };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([340.0, 200.0])
+            .with_title("Rasklad")
+            .with_inner_size([340.0, height])
             .with_resizable(false)
             .with_visible(visible)
             .with_icon(icon.clone()),
@@ -407,9 +416,11 @@ pub fn run(
 
     let app_cmds = cmds.clone();
     let _ = eframe::run_native(
-        "rasklad",
+        "Rasklad",
         options,
         Box::new(move |cc| {
+            // Only explanatory text is selectable; button/field labels aren't.
+            cc.egui_ctx.style_mut(|s| s.interaction.selectable_labels = false);
             spawn_events(cc.egui_ctx.clone(), shared.clone(), app_cmds, show_event.0 as usize);
             Ok(Box::new(App::new(shared, cmds, worker, icon)))
         }),

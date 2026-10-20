@@ -13,7 +13,7 @@ use windows::Win32::System::Threading::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const TITLE: &[u16] = &[b'r' as u16, b'a' as u16, b's' as u16, b'k' as u16, b'l' as u16, b'a' as u16, b'd' as u16, 0];
+const TITLE: &[u16] = &[b'R' as u16, b'a' as u16, b's' as u16, b'k' as u16, b'l' as u16, b'a' as u16, b'd' as u16, 0];
 
 struct EnumCtx {
     pid: u32,
