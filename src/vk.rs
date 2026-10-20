@@ -28,8 +28,9 @@ pub const VK_APPS: u32 = 0x5D;
 pub const VK_NUMLOCK: u32 = 0x90;
 pub const VK_SCROLL: u32 = 0x91;
 
-/// Keys that act as modifiers and are therefore never treated as a
-/// hotkey's trigger key (they only contribute to the modifier mask).
+/// Keys that act as modifiers. Kept for unit tests; hook.rs uses its own
+/// modifier-bit mapping (`mod_bit`) for the fast path.
+#[cfg(test)]
 pub fn is_modifier(vk: u32) -> bool {
     matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
 }
