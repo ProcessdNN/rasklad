@@ -15,6 +15,8 @@ mod switcher;
 #[cfg(windows)]
 mod ui;
 #[cfg(windows)]
+mod winshow;
+#[cfg(windows)]
 mod worker;
 
 #[cfg(windows)]

@@ -22,6 +22,7 @@ use crate::config::{self, AutostartMethod, Config};
 use crate::hotkey::Hotkey;
 use crate::shared::{CaptureResult, Shared};
 use crate::worker::{self, menu_id, WorkerCmd};
+use crate::winshow;
 
 pub struct App {
     shared: Arc<Shared>,
@@ -185,8 +186,9 @@ impl eframe::App for App {
 }
 
 /// Drains tray-icon, tray-menu and second-instance events and reacts
-/// immediately: viewport commands are thread-safe, so showing the window
-/// does not depend on egui's repaint cycle.
+/// immediately. Besides egui viewport commands it also raises the native
+/// window directly — Windows refuses SetForegroundWindow to background
+/// processes, so without this the window only flashes on the taskbar.
 fn spawn_events(
     ctx: egui::Context,
     shared: Arc<Shared>,
@@ -195,7 +197,9 @@ fn spawn_events(
 ) {
     let show = |ctx: &egui::Context| {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        winshow::raise_main_window();
     };
     std::thread::spawn(move || loop {
         let show_event = HANDLE(show_event as *mut _);
