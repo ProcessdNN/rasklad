@@ -35,3 +35,21 @@ pub fn acquire() -> Instance {
         }
     }
 }
+
+/// For the elevated relaunch: the exiting low-privilege process may still
+/// hold the mutex for a moment, so retry until we can become primary
+/// instead of giving up and showing the old window.
+pub fn acquire_primary_wait(max_ms: u64) -> Instance {
+    let start = std::time::Instant::now();
+    loop {
+        match acquire() {
+            primary @ Instance::Primary { .. } => return primary,
+            Instance::Secondary => {
+                if start.elapsed().as_millis() as u64 >= max_ms {
+                    return Instance::Secondary;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+    }
+}

@@ -53,7 +53,7 @@ pub fn relaunch_elevated() -> bool {
             None,
             w!("runas"),
             PCWSTR(exe_w.as_ptr()),
-            PCWSTR::null(),
+            w!("--elevated"),
             PCWSTR::null(),
             SW_SHOWNORMAL,
         )

@@ -30,8 +30,15 @@ fn main() {
     // Autostart registers us with --minimized: stay in the tray.
     // A manual launch opens the settings window instead.
     let minimized = std::env::args().any(|a| a == "--minimized");
+    // Started by the "relaunch as admin" link: the previous process is on
+    // its way out — wait for it to release the single-instance mutex.
+    let wait_primary = std::env::args().any(|a| a == "--elevated");
 
-    let show_event = match instance::acquire() {
+    let show_event = match if wait_primary {
+        instance::acquire_primary_wait(10_000)
+    } else {
+        instance::acquire()
+    } {
         instance::Instance::Secondary => return,
         instance::Instance::Primary { show, .. } => show,
     };

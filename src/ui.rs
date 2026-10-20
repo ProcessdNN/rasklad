@@ -153,13 +153,19 @@ impl App {
     }
 
     fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
+        // Pop next to the main window instead of wherever the WM puts it.
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title("Autostart")
+            .with_inner_size([300.0, 110.0])
+            .with_resizable(false)
+            .with_icon(self.icon.clone());
+        if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
+            let c = outer.center();
+            builder = builder.with_position(egui::pos2(c.x - 150.0, c.y - 55.0));
+        }
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("autostart-window"),
-            egui::ViewportBuilder::default()
-                .with_title("Autostart")
-                .with_inner_size([300.0, 110.0])
-                .with_resizable(false)
-                .with_icon(self.icon.clone()),
+            builder,
             |ctx, _class| {
                 if ctx.input(|i| i.viewport().close_requested()) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -276,9 +282,7 @@ impl eframe::App for App {
             ui.separator();
             ui.add_space(4.0);
             ui.label("Lives in the system tray. Closing this window keeps it running.");
-            if self.elevated {
-                ui.label("Default: Caps Lock switches layout; Shift+Caps still toggles caps.");
-            } else {
+            if !self.elevated {
                 ui.label("Not running as administrator — layout switching");
                 ui.horizontal(|ui| {
                     ui.label("won't work in elevated windows.");
