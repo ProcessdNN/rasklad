@@ -120,9 +120,22 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                 }
                 let triggered = TRIGGERED.with(|t| t.get());
                 if down {
-                    let fire = {
+                    let (fire, inject_caps, swallow) = {
                         let cfg = shared.config.lock().unwrap();
-                        cfg.enabled && cfg.hotkey.matches(vk_code, mods_for(vk_code))
+                        let fire =
+                            cfg.enabled && cfg.hotkey.matches(vk_code, mods_for(vk_code));
+                        // While Caps is the layout trigger, every other Caps
+                        // press must be swallowed — otherwise Windows toggles
+                        // caps mode natively on ANY modifier+Caps. Only the
+                        // configured combo gets through, as a synthetic
+                        // tagged bare-Caps press.
+                        let caps_owned =
+                            vk_code == vk::VK_CAPITAL && cfg.hotkey.vk == vk::VK_CAPITAL;
+                        let inject = !fire
+                            && caps_owned
+                            && cfg.caps_combo != CapsCombo::Off
+                            && cfg.caps_combo.matches(&mods_for(vk_code));
+                        (fire, inject, caps_owned)
                     };
                     if fire {
                         if triggered != vk_code {
@@ -131,17 +144,10 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                         }
                         return LRESULT(1);
                     }
-                    // Caps-mode combo (e.g. Shift+Caps): the press is
-                    // swallowed and a synthetic bare Caps is injected
-                    // instead — tagged so this hook ignores it.
-                    let caps = {
-                        let cfg = shared.config.lock().unwrap();
-                        cfg.caps_combo != CapsCombo::Off
-                            && vk_code == vk::VK_CAPITAL
-                            && cfg.caps_combo.matches(&mods_for(vk_code))
-                    };
-                    if caps {
+                    if inject_caps {
                         switcher::tap_key(vk::VK_CAPITAL);
+                    }
+                    if swallow {
                         return LRESULT(1);
                     }
                 } else if vk_code == triggered {
