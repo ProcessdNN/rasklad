@@ -18,10 +18,10 @@ jobs:
       - run: cargo build --release
       - name: Package
         shell: pwsh
-        run: Compress-Archive target/release/capswitch.exe "capswitch-${{ github.ref_name }}-windows-x64.zip"
+        run: Compress-Archive target/release/rasklad.exe "rasklad-${{ github.ref_name }}-windows-x64.zip"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            target/release/capswitch.exe
-            capswitch-${{ github.ref_name }}-windows-x64.zip
+            target/release/rasklad.exe
+            rasklad-${{ github.ref_name }}-windows-x64.zip
           generate_release_notes: true

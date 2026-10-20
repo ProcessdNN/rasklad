@@ -1,5 +1,5 @@
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        let _ = embed_resource::compile("capswitch.rc", embed_resource::NONE);
+        let _ = embed_resource::compile("rasklad.rc", embed_resource::NONE);
     }
 }

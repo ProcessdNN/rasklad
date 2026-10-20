@@ -44,7 +44,7 @@ fn main() {
         shared.worker_tid.store(tid, Ordering::SeqCst);
     } else {
         // Worker failed to start (hook/tray init error) — nothing to run.
-        eprintln!("capswitch: failed to initialize hook/tray");
+        eprintln!("rasklad: failed to initialize hook/tray");
         std::process::exit(1);
     }
 
@@ -57,5 +57,5 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("capswitch is a Windows-only application.");
+    eprintln!("rasklad is a Windows-only application.");
 }

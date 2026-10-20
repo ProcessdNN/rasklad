@@ -27,9 +27,9 @@ pub enum WorkerCmd {
 pub const WM_WAKEUP: u32 = WM_APP + 1;
 
 pub mod menu_id {
-    pub const SETTINGS: &str = "capswitch.settings";
-    pub const ENABLED: &str = "capswitch.enabled";
-    pub const QUIT: &str = "capswitch.quit";
+    pub const SETTINGS: &str = "rasklad.settings";
+    pub const ENABLED: &str = "rasklad.enabled";
+    pub const QUIT: &str = "rasklad.quit";
 }
 
 /// Wake the worker's message loop so it drains the command channel.
@@ -65,7 +65,7 @@ pub fn run(
         let icon = Icon::from_rgba(rgba, w, h).expect("tray icon rgba");
         let _tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("capswitch — layout switcher")
+            .with_tooltip("rasklad — layout switcher")
             .with_icon(icon)
             .with_menu_on_left_click(false)
             .build()

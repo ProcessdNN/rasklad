@@ -147,7 +147,7 @@ impl eframe::App for App {
         let cfg = self.config();
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("capswitch");
+            ui.heading("rasklad");
             ui.label("Switch keyboard layout with a custom hotkey.");
             ui.add_space(8.0);
 
@@ -219,5 +219,5 @@ pub fn run(
     };
 
     let app = App::new(shared, cmds, worker, show_event);
-    let _ = eframe::run_native("capswitch", options, Box::new(move |_cc| Ok(Box::new(app))));
+    let _ = eframe::run_native("rasklad", options, Box::new(move |_cc| Ok(Box::new(app))));
 }

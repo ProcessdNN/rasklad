@@ -16,19 +16,19 @@ pub enum Instance {
 /// "show" event on the running one and returns `Secondary`.
 pub fn acquire() -> Instance {
     unsafe {
-        let mutex = match CreateMutexW(None, true, w!("capswitch-instance")) {
+        let mutex = match CreateMutexW(None, true, w!("rasklad-instance")) {
             Ok(m) => m,
             Err(_) => return Instance::Secondary,
         };
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            if let Ok(ev) = OpenEventW(EVENT_MODIFY_STATE, false, w!("capswitch-show")) {
+            if let Ok(ev) = OpenEventW(EVENT_MODIFY_STATE, false, w!("rasklad-show")) {
                 let _ = SetEvent(ev);
                 let _ = CloseHandle(ev);
             }
             let _ = CloseHandle(mutex);
             return Instance::Secondary;
         }
-        let show = CreateEventW(None, true, false, w!("capswitch-show")).unwrap_or_default();
+        let show = CreateEventW(None, true, false, w!("rasklad-show")).unwrap_or_default();
         Instance::Primary {
             _mutex: mutex,
             show,

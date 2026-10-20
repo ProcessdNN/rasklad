@@ -1,7 +1,11 @@
-# capswitch
+# Rasklad
 
 A tiny Windows tray tool that switches the keyboard layout with a custom
 hotkey — **Caps Lock** by default — so it stops being a dead key.
+
+> **Note:** this project was previously named **capswitch**. Early history
+> (up to and including `v0.1.0`) was released under the MIT license; from
+> `v0.2.0` onward Rasklad is licensed under **GPLv3**.
 
 ## Features
 
@@ -15,31 +19,31 @@ hotkey — **Caps Lock** by default — so it stops being a dead key.
   input isn't filtered by UIPI, so it also works while an elevated
   (administrator) window is focused — no admin rights needed.
 - **Tray-first**: lives in the notification area; left-click the icon for
-  settings, right-click for the menu (Settings / Enabled / Quit).
-- **Autostart**: one checkbox registers it in `HKCU\...\Run` (starts
-  minimized to tray).
+  settings, right-click for the menu (Enabled / Quit).
+- **Autostart**: your pick — registry Run key, Startup-folder shortcut, or
+  a logon scheduled task.
 - Single instance: launching the exe again just opens the settings window
   of the running copy.
 
 ## Download
 
-Grab `capswitch.exe` from
-[Releases](https://github.com/ProcessdNN/capswitch/releases). It's a single
+Grab `rasklad.exe` from
+[Releases](https://github.com/ProcessdNN/rasklad/releases). It's a single
 portable binary — no installer.
 
 ## Usage
 
 - First launch opens the settings window: enable/disable, record a new
-  hotkey, toggle autostart.
+  hotkey, or open the ⋯ menu for autostart settings and Exit.
 - Close the window to keep the app running in the tray; use tray menu →
   Quit to exit.
-- Config is stored in `%APPDATA%\capswitch\config.json`.
+- Config is stored in `%APPDATA%\rasklad\config.json`.
 
 ## Build
 
 ```powershell
 cargo build --release
-# target\release\capswitch.exe
+# target\release\rasklad.exe
 ```
 
 Requires stable Rust with the `x86_64-pc-windows-msvc` toolchain.
@@ -54,4 +58,6 @@ Requires stable Rust with the `x86_64-pc-windows-msvc` toolchain.
 
 ## License
 
-MIT
+GPL-3.0 (see [LICENSE](LICENSE)). Code committed before the v0.2.0
+relicensing (project name `capswitch`) was published under the MIT
+license.

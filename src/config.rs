@@ -40,7 +40,7 @@ mod imp {
         let base = std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        base.join("capswitch").join("config.json")
+        base.join("rasklad").join("config.json")
     }
 
     pub fn load() -> Config {
@@ -73,9 +73,9 @@ mod imp {
         if enable {
             let exe = std::env::current_exe()?;
             let value = format!("\"{}\" --minimized", exe.display());
-            key.set_value("capswitch", &value)?;
+            key.set_value("rasklad", &value)?;
         } else {
-            let _ = key.delete_value("capswitch");
+            let _ = key.delete_value("rasklad");
         }
         Ok(())
     }
