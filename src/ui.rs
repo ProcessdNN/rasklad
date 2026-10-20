@@ -1,8 +1,10 @@
-//! egui settings window plus tray/menu event handling. Runs on the main
-//! thread inside eframe's winit event loop.
+//! egui settings window, plus a dedicated event thread that owns the
+//! tray/menu event receivers so clicks are handled instantly even while
+//! the window is hidden (egui only repaints on demand).
 
 #![cfg(windows)]
 
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -25,22 +27,15 @@ pub struct App {
     shared: Arc<Shared>,
     cmds: Sender<WorkerCmd>,
     worker: Option<JoinHandle<()>>,
-    show_event: HANDLE,
     recording: bool,
 }
 
 impl App {
-    fn new(
-        shared: Arc<Shared>,
-        cmds: Sender<WorkerCmd>,
-        worker: JoinHandle<()>,
-        show_event: HANDLE,
-    ) -> Self {
+    fn new(shared: Arc<Shared>, cmds: Sender<WorkerCmd>, worker: JoinHandle<()>) -> Self {
         Self {
             shared,
             cmds,
             worker: Some(worker),
-            show_event,
             recording: false,
         }
     }
@@ -49,21 +44,13 @@ impl App {
         self.shared.config.lock().unwrap().clone()
     }
 
-    fn set_enabled(&self, enabled: bool) {
-        {
-            let mut cfg = self.shared.config.lock().unwrap();
-            cfg.enabled = enabled;
-            let _ = config::save(&cfg);
-        }
-        let _ = self.cmds.send(WorkerCmd::RefreshMenu);
-        worker::notify(&self.shared);
-    }
-
     fn set_hotkey(&self, hotkey: Hotkey) {
-        let cfg = self.shared.config.lock().unwrap();
-        let mut next = cfg.clone();
-        drop(cfg);
-        next.hotkey = hotkey;
+        let next = {
+            let cfg = self.shared.config.lock().unwrap();
+            let mut next = cfg.clone();
+            next.hotkey = hotkey;
+            next
+        };
         let _ = config::save(&next);
         *self.shared.config.lock().unwrap() = next;
     }
@@ -76,11 +63,6 @@ impl App {
         }
     }
 
-    fn show(&self, ctx: &egui::Context) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-    }
-
     fn quit(&mut self) {
         let _ = self.cmds.send(WorkerCmd::Shutdown);
         worker::notify(&self.shared);
@@ -89,41 +71,10 @@ impl App {
         }
         std::process::exit(0);
     }
+}
 
-    fn handle_events(&mut self, ctx: &egui::Context) {
-        // Tray icon clicks: left click / double click opens settings.
-        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
-            let left = match &ev {
-                TrayIconEvent::Click { button, .. } => *button == MouseButton::Left,
-                TrayIconEvent::DoubleClick { button, .. } => *button == MouseButton::Left,
-                _ => false,
-            };
-            if left {
-                self.show(ctx);
-            }
-        }
-
-        // Tray menu.
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
-            match ev.id.0.as_str() {
-                menu_id::SETTINGS => self.show(ctx),
-                menu_id::ENABLED => {
-                    let on = !self.config().enabled;
-                    self.set_enabled(on);
-                }
-                menu_id::QUIT => self.quit(),
-                _ => {}
-            }
-        }
-
-        // Second instance asked us to show the window.
-        unsafe {
-            if WaitForSingleObject(self.show_event, 0) == WAIT_OBJECT_0 {
-                let _ = ResetEvent(self.show_event);
-                self.show(ctx);
-            }
-        }
-
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Hotkey capture finished in the hook.
         if let Some(res) = self.shared.capture.lock().unwrap().take() {
             self.recording = false;
@@ -137,12 +88,6 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
-    }
-}
-
-impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.handle_events(ctx);
 
         let cfg = self.config();
 
@@ -153,7 +98,7 @@ impl eframe::App for App {
 
             let mut enabled = cfg.enabled;
             if ui.checkbox(&mut enabled, "Enabled").changed() {
-                self.set_enabled(enabled);
+                worker::set_enabled(&self.shared, &self.cmds, enabled);
             }
 
             ui.add_space(4.0);
@@ -165,9 +110,7 @@ impl eframe::App for App {
                 } else {
                     if ui.button("Record").clicked() {
                         self.recording = true;
-                        self.shared
-                            .capturing
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        self.shared.capturing.store(true, Ordering::SeqCst);
                     }
                     if ui.button("Reset").clicked() {
                         self.set_hotkey(Hotkey::default());
@@ -184,15 +127,75 @@ impl eframe::App for App {
                 self.set_autostart(autostart);
             }
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             ui.separator();
-            ui.small("Lives in the system tray. Closing this window keeps it running.");
-            ui.small("Default: Caps Lock switches layout; Shift+Caps still toggles caps.");
+            ui.add_space(4.0);
+            ui.label("Lives in the system tray. Closing this window keeps it running.");
+            ui.label("Default: Caps Lock switches layout; Shift+Caps still toggles caps.");
         });
 
-        // Keep polling tray/menu/hook events even while the window is hidden.
-        ctx.request_repaint_after(Duration::from_millis(100));
+        // Repaint periodically so capture results and checkbox state stay
+        // fresh; tray/menu events additionally trigger request_repaint().
+        ctx.request_repaint_after(Duration::from_millis(200));
     }
+}
+
+/// Drains tray-icon, tray-menu and second-instance events and reacts
+/// immediately: viewport commands are thread-safe, so showing the window
+/// does not depend on egui's repaint cycle.
+fn spawn_events(
+    ctx: egui::Context,
+    shared: Arc<Shared>,
+    cmds: Sender<WorkerCmd>,
+    show_event: usize,
+) {
+    let show = |ctx: &egui::Context| {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    };
+    std::thread::spawn(move || loop {
+        let show_event = HANDLE(show_event as *mut _);
+        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+            let left = matches!(
+                ev,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    ..
+                } | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            );
+            if left {
+                show(&ctx);
+            }
+        }
+        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+            match ev.id.0.as_str() {
+                menu_id::ENABLED => {
+                    let on = !shared.config.lock().unwrap().enabled;
+                    worker::set_enabled(&shared, &cmds, on);
+                    ctx.request_repaint();
+                }
+                menu_id::QUIT => {
+                    let _ = cmds.send(WorkerCmd::Shutdown);
+                    worker::notify(&shared);
+                    // Give the worker a moment to unhook and drop the tray
+                    // icon before the process dies.
+                    std::thread::sleep(Duration::from_millis(250));
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
+        unsafe {
+            if WaitForSingleObject(show_event, 0) == WAIT_OBJECT_0 {
+                let _ = ResetEvent(show_event);
+                show(&ctx);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    });
 }
 
 pub fn run(
@@ -218,6 +221,13 @@ pub fn run(
         ..Default::default()
     };
 
-    let app = App::new(shared, cmds, worker, show_event);
-    let _ = eframe::run_native("rasklad", options, Box::new(move |_cc| Ok(Box::new(app))));
+    let app_cmds = cmds.clone();
+    let _ = eframe::run_native(
+        "rasklad",
+        options,
+        Box::new(move |cc| {
+            spawn_events(cc.egui_ctx.clone(), shared.clone(), app_cmds, show_event.0 as usize);
+            Ok(Box::new(App::new(shared, cmds, worker)))
+        }),
+    );
 }
