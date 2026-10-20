@@ -294,27 +294,39 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // No in-window title — the title bar already says "Rasklad".
+            // The ⋯ button shares the subtitle row so no dead strip is left.
             ui.horizontal(|ui| {
+                ui.add(egui::Label::new("Switch keyboard layout with a custom hotkey.").selectable(true));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // U+22EF is missing from egui's bundled font — use
-                    // the plain ellipsis so the button doesn't draw tofu.
-                    ui.menu_button("…", |ui| {
-                        if ui.button("Autostart…").clicked() {
-                            self.autostart_open = true;
-                            ui.close_menu();
-                        }
-                        if ui.button("Advanced…").clicked() {
-                            self.advanced_open = true;
-                            ui.close_menu();
-                        }
-                        ui.separator();
-                        if ui.button("Exit").clicked() {
-                            self.quit();
-                        }
-                    });
+                    // menu_button inherits the narrow layout here and clips
+                    // the popup to dots — use an explicit popup instead.
+                    let popup_id = ui.make_persistent_id("main-menu");
+                    let resp = ui.button("…");
+                    if resp.clicked() {
+                        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                    }
+                    egui::popup::popup_below_widget(
+                        ui,
+                        popup_id,
+                        &resp,
+                        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+                        |ui| {
+                            if ui.button("Autostart…").clicked() {
+                                self.autostart_open = true;
+                                ui.memory_mut(|mem| mem.close_popup());
+                            }
+                            if ui.button("Advanced…").clicked() {
+                                self.advanced_open = true;
+                                ui.memory_mut(|mem| mem.close_popup());
+                            }
+                            ui.separator();
+                            if ui.button("Exit").clicked() {
+                                self.quit();
+                            }
+                        },
+                    );
                 });
             });
-            ui.add(egui::Label::new("Switch keyboard layout with a custom hotkey.").selectable(true));
             ui.add_space(8.0);
 
             let mut enabled = cfg.enabled;

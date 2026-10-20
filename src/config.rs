@@ -201,13 +201,27 @@ mod imp {
         }
     }
 
-    /// `schtasks /Query` succeeding proves the task exists.
-    fn verify_task() -> io::Result<()> {
+    /// Run schtasks without a console window — otherwise a console flash
+    /// steals focus for a split second and it lands back on the main
+    /// window, hiding the autostart child behind it.
+    fn schtasks(args: &[String]) -> io::Result<std::process::Output> {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
 
-        let out = Command::new("schtasks")
-            .args(["/Query", "/TN", "Rasklad"])
-            .output()?;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        Command::new("schtasks")
+            .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    }
+
+    /// `schtasks /Query` succeeding proves the task exists.
+    fn verify_task() -> io::Result<()> {
+        let out = schtasks(&[
+            "/Query".into(),
+            "/TN".into(),
+            "Rasklad".into(),
+        ])?;
         if out.status.success() {
             Ok(())
         } else {
@@ -293,8 +307,6 @@ mod imp {
 
     /// A logon task via schtasks.exe (no COM / admin needed).
     fn scheduled_task(enable: bool) -> io::Result<()> {
-        use std::process::Command;
-
         let (args, op): (Vec<String>, &str) = if enable {
             let exe = std::env::current_exe()?;
             (
@@ -323,7 +335,7 @@ mod imp {
                 "delete",
             )
         };
-        let out = Command::new("schtasks").args(&args).output()?;
+        let out = schtasks(&args)?;
         if out.status.success() {
             Ok(())
         } else {
