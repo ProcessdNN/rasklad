@@ -3,9 +3,9 @@
 A tiny Windows tray tool that switches the keyboard layout with a custom
 hotkey — **Caps Lock** by default — so it stops being a dead key.
 
-> **Note:** this project was previously named **capswitch**. Early history
-> (up to and including `v0.1.0`) was released under the MIT license; from
-> `v0.2.0` onward Rasklad is licensed under **GPLv3**.
+> **Note:** early history (up to and including `v0.1.0`) was released
+> under the MIT license; from `v0.2.0` onward Rasklad is licensed under
+> **GPLv3**.
 
 ## Features
 
@@ -15,9 +15,10 @@ hotkey — **Caps Lock** by default — so it stops being a dead key.
   `Alt+Q`, a single `F13`, ...) from the settings window.
 - **Works everywhere**: the switch is performed by injecting the system's
   own layout-switch keystroke (`Alt+Shift`, `Ctrl+Shift` — whichever is
-  bound in Windows, or `Win+Space` as fallback) via `SendInput`. Injected
-  input isn't filtered by UIPI, so it also works while an elevated
-  (administrator) window is focused — no admin rights needed.
+  bound in Windows, or `Win+Space` as fallback) via `SendInput`. For
+  elevated (administrator) windows the app must run as admin — the
+  settings window detects that and offers a one-click elevated
+  relaunch.
 - **Tray-first**: lives in the notification area; left-click the icon for
   settings, right-click for the menu (Enabled / Quit).
 - **Autostart**: your pick — registry Run key, Startup-folder shortcut, or
@@ -59,5 +60,4 @@ Requires stable Rust with the `x86_64-pc-windows-msvc` toolchain.
 ## License
 
 GPL-3.0 (see [LICENSE](LICENSE)). Code committed before the v0.2.0
-relicensing (project name `capswitch`) was published under the MIT
-license.
+relicensing was published under the MIT license.
