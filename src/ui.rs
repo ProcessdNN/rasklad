@@ -18,7 +18,7 @@ use tray_icon::menu::MenuEvent;
 use tray_icon::{MouseButton, TrayIconEvent};
 
 use crate::assets;
-use crate::config::{self, Config};
+use crate::config::{self, AutostartMethod, Config};
 use crate::hotkey::Hotkey;
 use crate::shared::{CaptureResult, Shared};
 use crate::worker::{self, menu_id, WorkerCmd};
@@ -28,6 +28,8 @@ pub struct App {
     cmds: Sender<WorkerCmd>,
     worker: Option<JoinHandle<()>>,
     recording: bool,
+    autostart_open: bool,
+    autostart_status: Option<String>,
 }
 
 impl App {
@@ -37,6 +39,8 @@ impl App {
             cmds,
             worker: Some(worker),
             recording: false,
+            autostart_open: false,
+            autostart_status: None,
         }
     }
 
@@ -55,11 +59,15 @@ impl App {
         *self.shared.config.lock().unwrap() = next;
     }
 
-    fn set_autostart(&self, on: bool) {
-        if config::set_autostart(on).is_ok() {
-            let mut cfg = self.shared.config.lock().unwrap();
-            cfg.autostart = on;
-            let _ = config::save(&cfg);
+    fn set_autostart(&mut self, method: AutostartMethod) {
+        match config::apply_autostart(method) {
+            Ok(()) => {
+                let mut cfg = self.shared.config.lock().unwrap();
+                cfg.autostart = method;
+                let _ = config::save(&cfg);
+                self.autostart_status = None;
+            }
+            Err(e) => self.autostart_status = Some(e.to_string()),
         }
     }
 
@@ -92,7 +100,20 @@ impl eframe::App for App {
         let cfg = self.config();
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("rasklad");
+            ui.horizontal(|ui| {
+                ui.heading("rasklad");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.menu_button("⋯", |ui| {
+                        if ui.button("Autostart…").clicked() {
+                            self.autostart_open = true;
+                            ui.close_menu();
+                        }
+                        if ui.button("Exit").clicked() {
+                            self.quit();
+                        }
+                    });
+                });
+            });
             ui.label("Switch keyboard layout with a custom hotkey.");
             ui.add_space(8.0);
 
@@ -118,21 +139,44 @@ impl eframe::App for App {
                 }
             });
 
-            ui.add_space(4.0);
-            let mut autostart = cfg.autostart;
-            if ui
-                .checkbox(&mut autostart, "Run at Windows startup")
-                .changed()
-            {
-                self.set_autostart(autostart);
-            }
-
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(4.0);
             ui.label("Lives in the system tray. Closing this window keeps it running.");
             ui.label("Default: Caps Lock switches layout; Shift+Caps still toggles caps.");
         });
+
+        // Autostart settings sub-window.
+        if self.autostart_open {
+            let method = cfg.autostart;
+            let mut open = self.autostart_open;
+            egui::Window::new("Autostart")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label("Run rasklad when you log in — pick one method:");
+                    egui::ComboBox::from_id_salt("autostart-method")
+                        .selected_text(method.title())
+                        .show_ui(ui, |ui| {
+                            for m in AutostartMethod::ALL {
+                                if ui.selectable_label(method == m, m.title()).clicked() {
+                                    self.set_autostart(m);
+                                }
+                            }
+                        });
+                    ui.add_space(8.0);
+                    ui.label(format!("Active: {}", method.title()));
+                    if ui.button("Turn off").clicked() {
+                        self.set_autostart(AutostartMethod::None);
+                    }
+                    if let Some(err) = &self.autostart_status {
+                        ui.colored_label(egui::Color32::RED, err);
+                    }
+                });
+            self.autostart_open = open;
+        }
 
         // Repaint periodically so capture results and checkbox state stay
         // fresh; tray/menu events additionally trigger request_repaint().
