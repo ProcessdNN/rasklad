@@ -19,7 +19,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: Compress-Archive target/release/rasklad.exe "rasklad-${{ github.ref_name }}-windows-x64.zip"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             target/release/rasklad.exe
