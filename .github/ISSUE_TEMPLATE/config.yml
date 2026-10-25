@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or idea
+    url: https://github.com/ProcessdNN/rasklad/discussions
+    about: Ask a question, or share a setup that works for you.
+  - name: Security problem
+    url: https://github.com/ProcessdNN/rasklad/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue.

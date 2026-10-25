@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a change or a new option
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Rasklad is deliberately small: it switches the keyboard layout from a
+        hotkey, lives in the tray and stays off the network. Requests inside
+        that scope are welcome, and so are arguments for moving the border.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the situation. The problem matters more than the solution.
+      placeholder: |
+        I work with three layouts and pressing the hotkey twice to cycle
+        through them is slower than it should be.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like rasklad to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you use now?
+      description: Another tool, a script, or nothing at all.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and did not find this request
+          required: true
