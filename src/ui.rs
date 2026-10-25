@@ -58,6 +58,69 @@ fn toggle_ui(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     response
 }
 
+/// Entries of the ⋯ menu. `Exit` is drawn after a separator.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuAction {
+    Autostart,
+    Advanced,
+    Exit,
+}
+
+const MENU_ITEMS: [(MenuAction, &str); 3] = [
+    (MenuAction::Autostart, "Autostart…"),
+    (MenuAction::Advanced, "Advanced…"),
+    (MenuAction::Exit, "Exit"),
+];
+
+const MENU_ITEM_H: f32 = 24.0;
+const MENU_SEP_H: f32 = 9.0;
+const MENU_TEXT_LEFT: f32 = 9.0;
+/// How far the menu travels while appearing, in points.
+const MENU_SLIDE: f32 = 5.0;
+
+fn menu_font() -> egui::FontId {
+    egui::FontId::proportional(13.5)
+}
+
+/// A child window (Autostart / Advanced) that is only revealed once the OS
+/// window really has the size we asked for.
+///
+/// winit creates a new window at the system default size (1440x789 here) and
+/// applies `with_inner_size` a frame or two later, so a window that is shown
+/// at creation flashes as a big empty rectangle first. Creating it hidden
+/// and showing it once the size matches removes that flash.
+#[derive(Default)]
+struct ChildWindow {
+    shown: bool,
+    polls: u32,
+}
+
+impl ChildWindow {
+    fn reset(&mut self) {
+        self.shown = false;
+        self.polls = 0;
+    }
+
+    /// True when the caller should paint (and the window is ready to show).
+    fn ready(&mut self, ctx: &egui::Context, size: egui::Vec2) -> bool {
+        if self.shown {
+            return true;
+        }
+        self.polls += 1;
+        let sized = ctx
+            .input(|i| i.viewport().inner_rect)
+            .map_or(false, |r| (r.size() - size).length() < 2.0);
+        // `polls` is a safety net in case the size is never reported.
+        if sized || self.polls > 8 {
+            self.shown = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            return true;
+        }
+        ctx.request_repaint();
+        false
+    }
+}
+
 /// Hyperlink-styled label: light gray, easing to white on hover.
 fn link_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let font_id = egui::FontId::proportional(13.5);
@@ -91,11 +154,30 @@ pub struct App {
     icon: Arc<egui::IconData>,
     elevated: bool,
     recording: bool,
+    /// Why the last captured combo was refused (shown while recording).
+    record_hint: Option<String>,
     admin_status: Option<String>,
     autostart_open: bool,
     autostart_sel: AutostartMethod,
     autostart_status: Option<String>,
+    /// One-off note from the startup autostart check (stale path repaired).
+    autostart_note: Option<String>,
+    autostart_win: ChildWindow,
     advanced_open: bool,
+    advanced_win: ChildWindow,
+    /// The ⋯ menu is drawn in this window as a floating card under the
+    /// button (see `menu_popup`).
+    menu_open: bool,
+    /// ⋯ button rect from the previous frame — the menu is anchored to it.
+    menu_button_rect: egui::Rect,
+    /// Menu card rect from the previous frame, for click-outside tests.
+    menu_rect: egui::Rect,
+    /// `InputState::time` when the menu was opened, drives the animation.
+    menu_opened_at: f64,
+    /// Last known focus state of our own window (for the debug log).
+    was_focused: bool,
+    /// Keys currently held, tracked by the in-window capture poll.
+    rec_down: std::collections::HashSet<u32>,
 }
 
 impl App {
@@ -112,11 +194,21 @@ impl App {
             icon,
             elevated: elevation::is_elevated(),
             recording: false,
+            record_hint: None,
             admin_status: None,
             autostart_open: false,
             autostart_sel: AutostartMethod::RegistryRun,
             autostart_status: None,
+            autostart_note: None,
+            autostart_win: ChildWindow::default(),
             advanced_open: false,
+            advanced_win: ChildWindow::default(),
+            menu_open: false,
+            menu_button_rect: egui::Rect::NOTHING,
+            menu_rect: egui::Rect::NOTHING,
+            menu_opened_at: 0.0,
+            was_focused: false,
+            rec_down: std::collections::HashSet::new(),
         }
     }
 
@@ -158,6 +250,51 @@ impl App {
         *self.shared.config.lock().unwrap() = next;
     }
 
+    /// Read the physical key state while recording and turn the first
+    /// non-modifier press into a hotkey. `GetAsyncKeyState` is global, so
+    /// this works regardless of which window the hook can see.
+    fn poll_capture(&mut self) {
+        let mods = crate::hook::current_modifiers();
+        for &vk_code in record_key_list() {
+            let down = crate::hook::key_down(vk_code);
+            let was = self.rec_down.contains(&vk_code);
+            if down && !was {
+                self.rec_down.insert(vk_code);
+                if vk_code == crate::vk::VK_ESCAPE {
+                    self.recording = false;
+                    self.record_hint = None;
+                    self.shared.capturing.store(false, Ordering::SeqCst);
+                    return;
+                }
+                if crate::vk::is_modifier(vk_code) {
+                    continue;
+                }
+                let hotkey = Hotkey {
+                    vk: vk_code,
+                    ctrl: mods.ctrl,
+                    alt: mods.alt,
+                    shift: mods.shift,
+                    win: mods.win,
+                };
+                match hotkey.validate() {
+                    Ok(()) => {
+                        self.recording = false;
+                        self.record_hint = None;
+                        self.shared.capturing.store(false, Ordering::SeqCst);
+                        self.set_hotkey(hotkey);
+                        return;
+                    }
+                    Err(hint) => {
+                        self.record_hint = Some(hint.to_string());
+                        return;
+                    }
+                }
+            } else if !down && was {
+                self.rec_down.remove(&vk_code);
+            }
+        }
+    }
+
     fn quit(&mut self) {
         let _ = self.cmds.send(WorkerCmd::Shutdown);
         worker::notify(&self.shared);
@@ -188,14 +325,21 @@ impl App {
     }
 
     fn advanced_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
-        let builder = self.child_builder(ctx, "Advanced settings", [300.0, 100.0]);
+        let size = egui::vec2(300.0, 100.0);
+        let builder = self
+            .child_builder(ctx, "Advanced settings", [size.x, size.y])
+            .with_visible(self.advanced_win.shown);
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("advanced-window"),
             builder,
             |ctx, _class| {
+                if !self.advanced_win.ready(ctx, size) {
+                    return;
+                }
                 if ctx.input(|i| i.viewport().close_requested()) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                     self.advanced_open = false;
+                    self.advanced_win.reset();
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.add_space(2.0);
@@ -219,14 +363,21 @@ impl App {
 
     fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
         // Pop next to the main window instead of wherever the WM puts it.
-        let builder = self.child_builder(ctx, "Autostart", [300.0, 110.0]);
+        let size = egui::vec2(300.0, 110.0);
+        let builder = self
+            .child_builder(ctx, "Autostart", [size.x, size.y])
+            .with_visible(self.autostart_win.shown);
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("autostart-window"),
             builder,
             |ctx, _class| {
+                if !self.autostart_win.ready(ctx, size) {
+                    return;
+                }
                 if ctx.input(|i| i.viewport().close_requested()) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                     self.autostart_open = false;
+                    self.autostart_win.reset();
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.add_space(2.0);
@@ -272,15 +423,153 @@ impl App {
             },
         );
     }
+
+    /// The ⋯ menu: a card under the button, drawn inside this window.
+    ///
+    /// `popup_below_widget` (the first attempt) sizes a popup to the width
+    /// of the widget it hangs off; the "…" button is ~24 pt, so every label
+    /// was squeezed into a column of single letters. The width is now
+    /// measured from the labels themselves, so nothing wraps. The card fades
+    /// in (egui's own `Area` fade) and slides up into place — no extra OS
+    /// window, so nothing flashes or jumps on the way in.
+    fn menu_popup(&mut self, ctx: &egui::Context) {
+        let font = menu_font();
+        let text_w = ctx.fonts(|f| {
+            MENU_ITEMS
+                .iter()
+                .map(|(_, label)| {
+                    f.layout_no_wrap((*label).to_owned(), font.clone(), egui::Color32::WHITE)
+                        .size()
+                        .x
+                })
+                .fold(0.0_f32, f32::max)
+        });
+        let content_w = (MENU_TEXT_LEFT + text_w + 14.0).max(112.0).round();
+
+        let frame = egui::Frame::popup(&ctx.style());
+        let pad = frame.total_margin().sum().x;
+
+        // Slide: the card starts a few points lower and eases up under the
+        // button, in step with the fade `Area` applies on its first frame.
+        let anim = ctx.style().animation_time as f64;
+        let t = (((ctx.input(|i| i.time) - self.menu_opened_at) / anim.max(0.001)) as f32)
+            .clamp(0.0, 1.0);
+        if t < 1.0 {
+            ctx.request_repaint();
+        }
+        let ease = 1.0 - (1.0 - t).powi(3);
+        let anchor = self.menu_button_rect;
+        let pos = egui::pos2(
+            anchor.right() - (content_w + pad),
+            anchor.bottom() + 2.0 + (1.0 - ease) * MENU_SLIDE,
+        );
+
+        let mut chosen = None;
+        let area = egui::Area::new(egui::Id::new("rasklad-main-menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .movable(false)
+            .interactable(true);
+
+        let shown = area.show(ctx, |ui| {
+            frame.show(ui, |ui| {
+                ui.set_width(content_w);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let text_color = ui.visuals().text_color();
+                let hot_color = ui.visuals().strong_text_color();
+                let hover_fill = ui.visuals().widgets.hovered.weak_bg_fill;
+                let sep_color = ui.visuals().window_stroke().color.gamma_multiply(0.7);
+
+                for (action, label) in MENU_ITEMS {
+                    if action == MenuAction::Exit {
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(content_w, MENU_SEP_H),
+                            egui::Sense::hover(),
+                        );
+                        let y = rect.center().y;
+                        ui.painter().line_segment(
+                            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                            egui::Stroke::new(1.0_f32, sep_color),
+                        );
+                    }
+
+                    let (rect, resp) = ui.allocate_exact_size(
+                        egui::vec2(content_w, MENU_ITEM_H),
+                        egui::Sense::click(),
+                    );
+                    let hot = resp.hovered();
+                    if hot {
+                        ui.painter().rect_filled(rect, 4.0, hover_fill);
+                    }
+                    ui.painter().text(
+                        egui::pos2(rect.left() + MENU_TEXT_LEFT, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        label,
+                        font.clone(),
+                        if hot { hot_color } else { text_color },
+                    );
+                    if resp.clicked() {
+                        chosen = Some(action);
+                    }
+                    resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                }
+            });
+        });
+
+        self.menu_rect = shown.response.rect;
+
+        if let Some(action) = chosen {
+            self.menu_open = false;
+            match action {
+                MenuAction::Autostart => self.autostart_open = true,
+                MenuAction::Advanced => self.advanced_open = true,
+                MenuAction::Exit => self.quit(),
+            }
+        }
+    }
+
+    /// Esc, a click outside the button/menu, or the window losing focus
+    /// closes the menu.
+    fn dismiss_menu(&mut self, ctx: &egui::Context) {
+        if !self.menu_open {
+            return;
+        }
+        let inside = self.menu_button_rect.union(self.menu_rect).expand(4.0);
+        let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
+            && ctx
+                .input(|i| i.pointer.interact_pos())
+                .map_or(true, |p| !inside.contains(p));
+        let lost_focus = ctx.input(|i| i.viewport().focused) == Some(false);
+        if clicked_outside || lost_focus || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.menu_open = false;
+        }
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Hotkey capture finished in the hook.
         if let Some(res) = self.shared.capture.lock().unwrap().take() {
-            self.recording = false;
-            if let CaptureResult::Captured(hk) = res {
-                self.set_hotkey(hk);
+            match res {
+                CaptureResult::Captured(hk) => {
+                    self.recording = false;
+                    self.record_hint = None;
+                    self.set_hotkey(hk);
+                }
+                CaptureResult::Cancelled => {
+                    self.recording = false;
+                    self.record_hint = None;
+                }
+                // Not a usable hotkey: keep recording, just explain why.
+                CaptureResult::Rejected(hint) => {
+                    self.record_hint = Some(hint.to_string());
+                }
+            }
+        }
+
+        if self.autostart_note.is_none() {
+            if let Some(note) = self.shared.autostart_note.lock().unwrap().take() {
+                self.autostart_note = Some(note);
             }
         }
 
@@ -288,6 +577,25 @@ impl eframe::App for App {
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.menu_open = false;
+        }
+
+        self.dismiss_menu(ctx);
+
+        // Hotkey capture also runs here, not only in the hook: the global
+        // hook is not called for keystrokes aimed at our own window on this
+        // machine, and recording is always done in this window.
+        if self.recording {
+            ctx.request_repaint_after(Duration::from_millis(16));
+            self.poll_capture();
+        }
+
+        // Log focus transitions: the hook not seeing keys while our own
+        // window is focused is the one thing that needs a trace.
+        let focused = ctx.input(|i| i.viewport().focused) == Some(true);
+        if focused != self.was_focused {
+            self.was_focused = focused;
+            crate::hook::debug_log(&format!("window focused={focused}"));
         }
 
         let cfg = self.config();
@@ -298,33 +606,18 @@ impl eframe::App for App {
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new("Switch keyboard layout with a custom hotkey.").selectable(true));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // menu_button inherits the narrow layout here and clips
-                    // the popup to dots — use an explicit popup instead.
-                    let popup_id = ui.make_persistent_id("main-menu");
+                    // The menu is drawn by `menu_popup` — a measured width,
+                    // so labels never wrap, and anchored to this button.
                     let resp = ui.button("…");
+                    self.menu_button_rect = resp.rect;
                     if resp.clicked() {
-                        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                        if self.menu_open {
+                            self.menu_open = false;
+                        } else {
+                            self.menu_open = true;
+                            self.menu_opened_at = ctx.input(|i| i.time);
+                        }
                     }
-                    egui::popup::popup_below_widget(
-                        ui,
-                        popup_id,
-                        &resp,
-                        egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-                        |ui| {
-                            if ui.button("Autostart…").clicked() {
-                                self.autostart_open = true;
-                                ui.memory_mut(|mem| mem.close_popup());
-                            }
-                            if ui.button("Advanced…").clicked() {
-                                self.advanced_open = true;
-                                ui.memory_mut(|mem| mem.close_popup());
-                            }
-                            ui.separator();
-                            if ui.button("Exit").clicked() {
-                                self.quit();
-                            }
-                        },
-                    );
                 });
             });
             ui.add_space(8.0);
@@ -392,6 +685,9 @@ impl eframe::App for App {
         }
         if self.advanced_open {
             self.advanced_viewport(ctx, &cfg);
+        }
+        if self.menu_open {
+            self.menu_popup(ctx);
         }
 
         // Repaint periodically so capture results and toggle state stay
@@ -500,4 +796,25 @@ pub fn run(
             Ok(Box::new(App::new(shared, cmds, worker, icon)))
         }),
     );
+}
+
+/// Virtual keys polled while recording a hotkey. Covers letters, digits,
+/// function keys, navigation/editing keys, numpad, punctuation, media and
+/// the modifiers themselves (tracked, never used as the main key).
+fn record_key_list() -> &'static [u32] {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<Vec<u32>> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        let mut v = vec![0x08, 0x09, 0x0D, 0x13, 0x14, 0x1B, 0x20, 0x2C, 0x2D, 0x2E, 0x90, 0x91];
+        v.extend(0x21..=0x28); // PgUp..Down, arrows
+        v.extend(0x30..=0x39); // digits
+        v.extend(0x41..=0x5A); // letters
+        v.extend(0x5B..=0x5D); // Win, Win, Menu
+        v.extend(0x60..=0x6F); // numpad
+        v.extend(0x70..=0x87); // F1..F24
+        v.extend(0xA0..=0xA5); // L/R shift, ctrl, alt
+        v.extend(0xBA..=0xC0); // ; = , - . / ~
+        v.extend(0xDB..=0xDE); // [ \\ ] '
+        v
+    })
 }
