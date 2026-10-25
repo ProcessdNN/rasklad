@@ -1,8 +1,14 @@
 <div align="center">
 
+<img src="assets/icon.png" width="112" alt="Rasklad icon">
+
 # Rasklad
 
-**A tiny Windows tray tool that switches keyboard layout with a custom hotkey** — Caps Lock by default, so it stops being a dead key.
+<hr>
+
+[RU](README.ru.md) / **EN**
+
+A small tray tool for Windows that switches the keyboard layout with a hotkey.
 
 [![Release](https://img.shields.io/github/v/release/ProcessdNN/rasklad?logo=github)](https://github.com/ProcessdNN/rasklad/releases)
 [![CI](https://github.com/ProcessdNN/rasklad/actions/workflows/ci.yml/badge.svg)](https://github.com/ProcessdNN/rasklad/actions/workflows/ci.yml)
@@ -12,87 +18,104 @@
 
 </div>
 
-## Download
+## Overview
 
-Grab `rasklad.exe` from
-[**Releases**](https://github.com/ProcessdNN/rasklad/releases) — a single
-portable binary, no installer.
+Caps Lock is a dead key on most keyboards. Rasklad turns it into a layout
+switch. Press it, the layout changes, and the key itself never reaches the
+application, so caps mode does not turn on by accident.
+
+The app lives in the notification area and has no window unless you open the
+settings. It is one exe with no installer, no runtime and no network access.
 
 ## Features
 
-- **Caps Lock → next layout** out of the box; the key is swallowed so caps
-  mode never turns on accidentally.
-- **Custom hotkey**: record any combo — `Ctrl+Space`, `Alt+Q`, `F13` — or
-  a key that stands on its own (`F1`–`F24`, `Home`/`End`/`PgUp`/`PgDn`,
-  arrows, `PrintScreen`, `Caps`). A bare modifier, or a plain letter with
-  no modifier, is refused — with the reason shown right in the window.
-- **Works everywhere**, including VM/RDP keyboards and injected input
-  (AutoHotkey, kiosk setups): only rasklad's own synthetic keystrokes are
-  filtered out.
-- **Elevated windows**: injected input isn't blocked by UIPI, but a truly
-  elevated foreground window still needs rasklad itself running as admin —
-  the settings window detects that and offers a one-click elevated
-  relaunch.
-- **Tray-first**: lives in the notification area; left-click the icon for
-  settings, right-click for the menu (Enabled / Quit).
-- **Switching that does not depend on Windows' own hotkey**: rasklad asks
-  the foreground window to activate the next layout instead of pressing
-  `Alt+Shift` for you, so it works on installs where that chord is unbound
-  (only `Win+Space` left) — and no language overlay flashes up.
-- **Autostart your way**: registry Run key, Startup-folder shortcut, or a
-  logon scheduled task — pick one in `⋯ → Autostart…`. The entry is
-  checked on every start: one that points at a deleted exe (or has an
-  empty command left by an older version) is recreated, and one that
-  points at a different build is reported in the Autostart window.
-- **Advanced settings**: choose which combo toggles Caps Lock mode itself
-  (`Shift+Caps` by default; `Ctrl`/`Alt`/`Win`+Caps, or Off).
-- **Single instance**: launching the exe again just opens the settings
-  window of the running copy.
+- **Any hotkey.** Record a combination like `Ctrl+Space` or `Alt+Q`, or a key
+  that works on its own such as `F13` or `PrintScreen`. A bare modifier, or a
+  letter with no modifier, is refused, and the window says why.
+- **Switching that does not depend on the system hotkey.** Rasklad asks the
+  foreground window to activate the next layout instead of pressing
+  `Alt+Shift` for you. It works on installs where that chord is unbound and
+  only `Win+Space` is left, and no language overlay appears.
+- **Caps Lock mode on your terms.** `Shift+Caps` by default, or `Ctrl`, `Alt`,
+  `Win`, or nothing at all.
+- **Autostart, checked.** Registry, Startup folder or a scheduled task. On
+  every start the entry is read back: a dead one is recreated, one that points
+  at another build is reported in the window.
+- **Tray first.** Left click opens the settings, right click opens the menu.
+  Closing the window keeps the app running.
+- **One instance.** Launching the exe again opens the window of the running
+  copy.
+- **No network.** No telemetry, no update check, no HTTP client in the
+  dependency tree.
+
+## Install
+
+Download `rasklad.exe` from
+[**Releases**](https://github.com/ProcessdNN/rasklad/releases) and run it.
+Nothing else is needed: no installer, no runtime, no redistributable.
+
+Windows 10 and 11, 64-bit.
+
+The first launch opens the settings window. Turn on autostart there if you want
+the app back after a reboot.
 
 ## Usage
 
-- First launch opens the settings window: enable/disable, record a new
-  hotkey (press the combo — the first real key you press becomes the
-  hotkey, `Esc` cancels), or open the `⋯` menu for Autostart / Advanced /
-  Exit.
-- Close the window to keep the app running in the tray; tray menu → Quit
-  exits for real.
-- Config lives in `%APPDATA%\rasklad\config.json`.
+- Press the hotkey in any application. The layout switches, and the key does
+  not reach the application.
+- Press `Win+Caps` to toggle caps mode, or whichever combination is set in
+  Advanced.
+- Left click the tray icon for settings, right click for the menu.
+
+## Settings
+
+| Control | What it does |
+|---|---|
+| Enabled | Master switch for the hotkey. |
+| Hotkey, Record | Press the combination. `Esc` cancels. |
+| `⋯` → Autostart | Registry Run key, Startup folder shortcut or a logon task. |
+| `⋯` → Advanced | Which combination toggles caps mode. |
+| `⋯` → Exit | Quit. Closing the window only hides it. |
+
+The config file is `%APPDATA%\rasklad\config.json`.
 
 ## Build
 
-```powershell
+```
 cargo build --release
-# target\release\rasklad.exe
 ```
 
 Requires stable Rust with the `x86_64-pc-windows-msvc` toolchain
-(`x86_64-pc-windows-gnu` also works).
+(`x86_64-pc-windows-gnu` also works). The exe lands in `target\release`.
 
 ## How it works
 
-- A `WH_KEYBOARD_LL` low-level hook on a dedicated thread watches for the
-  trigger key and eats it (returns without `CallNextHookEx`).
-- The layout is switched by asking the foreground window to activate the
-  next layout (`WM_INPUTLANGCHANGEREQUEST`) — no synthetic keys, no
-  overlay. If the window cannot be asked (it runs elevated and UIPI blocks
-  the message), `Win+Space` is injected instead; those keystrokes carry a
-  `dwExtraInfo` tag so the hook tells them apart from other injected input
-  (AutoHotkey, VMs, kiosks).
-- Modifier state is read from `GetAsyncKeyState` on each key event instead
-  of being accumulated, so a missed key-up cannot leave the hotkey stuck.
-- `assets/icon.*` is embedded into the exe and used for the tray and
-  window icons.
+- A `WH_KEYBOARD_LL` hook on a dedicated thread watches key presses and eats
+  the trigger.
+- The layout is switched with `WM_INPUTLANGCHANGEREQUEST` sent to the
+  foreground window. When that window runs elevated the message is blocked, and
+  `Win+Space` is injected instead.
+- Modifier state is read from `GetAsyncKeyState` on every event. Nothing is
+  accumulated, so a missed key release cannot leave the hotkey stuck.
+- Autostart entries are read back at startup, which is how a stale registry
+  value or shortcut gets noticed.
 
 ## Known limitations
 
-- The hotkey does not fire while rasklad's own settings window is focused —
-  Windows does not deliver those keystrokes to the hook. Recording a
-  hotkey is unaffected, because it reads the physical key state instead.
-- Layout switching in a foreground window that runs elevated still needs
-  rasklad itself to run as admin.
+- The hotkey does not fire while the rasklad window itself is focused. Windows
+  does not deliver those keystrokes to the hook. Recording a hotkey is not
+  affected, because it reads the key state directly.
+- Switching the layout of an elevated foreground window needs rasklad to run as
+  administrator. The settings window detects this and offers a restart with
+  elevation.
+
+## Contributing
+
+Patches are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Questions and
+reports go through [SUPPORT.md](SUPPORT.md), security issues through
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-GPL-3.0 (see [LICENSE](LICENSE)). Code committed before the v0.2.0
-relicensing was published under the MIT license.
+GPL-3.0, see [LICENSE](LICENSE). Code committed before the v0.2.0 relicensing
+was published under the MIT license.
