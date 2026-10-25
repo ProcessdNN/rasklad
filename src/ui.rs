@@ -680,11 +680,20 @@ impl eframe::App for App {
                     ui.label("press keys…");
                     if ui.button("Cancel").clicked() {
                         self.recording = false;
+                        self.record_hint = None;
                         self.shared.capturing.store(false, Ordering::SeqCst);
                     }
                 } else {
                     if ui.button("Record").clicked() {
                         self.recording = true;
+                        self.record_hint = None;
+                        // Seed with keys already held so a modifier that was
+                        // down before recording is not treated as a press.
+                        self.rec_down = record_key_list()
+                            .iter()
+                            .copied()
+                            .filter(|&vk| crate::hook::key_down(vk))
+                            .collect();
                         self.shared.capturing.store(true, Ordering::SeqCst);
                     }
                     if ui.button("Reset").clicked() {
@@ -692,6 +701,12 @@ impl eframe::App for App {
                     }
                 }
             });
+            if self.recording {
+                if let Some(hint) = &self.record_hint {
+                    ui.add_space(2.0);
+                    ui.colored_label(egui::Color32::from_rgb(240, 180, 90), hint.as_str());
+                }
+            }
 
             ui.add_space(10.0);
             ui.separator();
