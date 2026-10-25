@@ -4,8 +4,6 @@
 
 # Rasklad
 
-<hr>
-
 [RU](README.ru.md) / **EN**
 
 A small tray tool for Windows that switches the keyboard layout with a hotkey.
