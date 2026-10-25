@@ -712,7 +712,7 @@ impl eframe::App for App {
             ui.separator();
             ui.add_space(4.0);
             ui.add(egui::Label::new(
-                "Lives in the system tray. Closing this window keeps it running.",
+                "Lives in the system tray.",
             ).selectable(true));
             if !self.elevated {
                 ui.add(egui::Label::new(
@@ -821,7 +821,9 @@ pub fn run(
     show_event: HANDLE,
     visible: bool,
 ) {
-    let (rgba, w, h) = assets::icon_rgba();
+    // Window/taskbar icon: 64px stays sharp on scaled displays and
+    // Windows derives the 16px title-bar icon from it.
+    let (rgba, w, h) = assets::icon_rgba(64);
     let icon = Arc::new(egui::IconData {
         rgba,
         width: w,

@@ -47,7 +47,14 @@ fn main() {
 
     let (cmd_tx, cmd_rx) = channel();
     let (tid_tx, tid_rx) = channel();
-    let icon = assets::icon_rgba();
+    // The tray draws a small icon; ask Windows which size that is (16 at
+    // 100% scaling, 20/24/32 on scaled displays) so it is not resampled.
+    let icon = assets::icon_rgba(unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+            windows::Win32::UI::WindowsAndMessaging::SM_CXSMICON,
+        )
+        .clamp(16, 64) as u32
+    });
     let worker_shared = shared.clone();
     let worker = std::thread::spawn(move || worker::run(worker_shared, cmd_rx, tid_tx, icon));
 
