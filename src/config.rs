@@ -96,6 +96,57 @@ impl CapsCombo {
     }
 }
 
+/// What the OS actually has registered for autostart.
+///
+/// The registry value / shortcut / scheduled task outlives the binary it
+/// points at: after moving or replacing the exe it can point at an old
+/// build, or be an empty command left by an earlier version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutostartState {
+    /// Autostart is off in the settings.
+    Disabled,
+    /// Registered and pointing at the running executable.
+    Ok,
+    /// Enabled in the settings, but nothing is registered.
+    Missing,
+    /// Registered, but pointing at some other file (old build, moved exe).
+    Stale(String),
+    /// Registered, but the command has no usable path.
+    Empty,
+}
+
+impl AutostartState {
+    /// True when the entry cannot work at all (nothing registered, an empty
+    /// command, or a path that no longer exists). A path that still resolves
+    /// to a real file is reported but not rewritten automatically: running a
+    /// test build from another folder must not hijack the user's autostart.
+    pub fn is_broken(&self) -> bool {
+        match self {
+            Self::Missing | Self::Empty => true,
+            Self::Stale(path) => !std::path::Path::new(path).exists(),
+            Self::Disabled | Self::Ok => false,
+        }
+    }
+
+    /// Entry exists but points at a different (still valid) executable.
+    pub fn is_stale_but_valid(&self) -> bool {
+        matches!(self, Self::Stale(path) if std::path::Path::new(path).exists())
+    }
+
+    /// One-line explanation for the UI; `None` when there is nothing to say.
+    pub fn message(&self) -> Option<String> {
+        match self {
+            Self::Disabled | Self::Ok => None,
+            Self::Missing => Some("Autostart entry was missing — recreated.".into()),
+            Self::Empty => Some("Autostart entry had no path — repaired.".into()),
+            Self::Stale(p) if std::path::Path::new(p).exists() => Some(format!(
+                "Autostart points to {p} — not this exe. Re-apply it to repoint."
+            )),
+            Self::Stale(_) => Some("Autostart pointed to a missing exe — repointed here.".into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Master on/off switch for the layout-switch hotkey.
@@ -132,7 +183,7 @@ mod imp {
     use std::io;
     use std::path::PathBuf;
 
-    use super::{AutostartMethod, Config};
+    use super::{AutostartMethod, AutostartState, Config};
 
     pub fn config_path() -> PathBuf {
         let base = std::env::var_os("APPDATA")
@@ -158,6 +209,140 @@ mod imp {
         fs::write(&tmp, serde_json::to_string_pretty(cfg).unwrap_or_default())?;
         fs::rename(&tmp, &path)?;
         Ok(())
+    }
+
+    /// Read back what the OS has registered and compare it with the exe
+    /// that is running right now.
+    pub fn autostart_state(method: AutostartMethod) -> AutostartState {
+        match method {
+            AutostartMethod::None => AutostartState::Disabled,
+            AutostartMethod::RegistryRun => registry_state(),
+            AutostartMethod::StartupFolder => startup_state(),
+            AutostartMethod::ScheduledTask => task_state(),
+        }
+    }
+
+    fn registry_state() -> AutostartState {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+
+        let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+        else {
+            return AutostartState::Missing;
+        };
+        match key.get_value::<String, _>("rasklad") {
+            Ok(value) => judge(&value),
+            Err(_) => AutostartState::Missing,
+        }
+    }
+
+    fn startup_state() -> AutostartState {
+        let Ok(lnk) = startup_lnk_path() else {
+            return AutostartState::Missing;
+        };
+        if !lnk.exists() {
+            return AutostartState::Missing;
+        }
+        match shortcut_target(&lnk) {
+            Some(target) if target.trim().is_empty() => AutostartState::Empty,
+            Some(target) => judge(&target),
+            // Could not read the link back: recreate it rather than guess.
+            None => AutostartState::Empty,
+        }
+    }
+
+    fn task_state() -> AutostartState {
+        let out = match schtasks(&[
+            "/Query".into(),
+            "/TN".into(),
+            "Rasklad".into(),
+            "/XML".into(),
+        ]) {
+            Ok(out) if out.status.success() => out,
+            _ => return AutostartState::Missing,
+        };
+        let xml = String::from_utf8_lossy(&out.stdout);
+        match xml_tag(&xml, "Command") {
+            Some(cmd) => judge(&cmd),
+            None => AutostartState::Empty,
+        }
+    }
+
+    /// Turn a command line into a verdict about the running exe.
+    fn judge(command: &str) -> AutostartState {
+        match command_path(command) {
+            None => AutostartState::Empty,
+            Some(path) => {
+                if same_exe(&path) {
+                    AutostartState::Ok
+                } else {
+                    AutostartState::Stale(path.display().to_string())
+                }
+            }
+        }
+    }
+
+    /// `"C:\app\rasklad.exe" --minimized` (or unquoted) → `C:\app\rasklad.exe`.
+    fn command_path(command: &str) -> Option<PathBuf> {
+        let s = command.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if let Some(rest) = s.strip_prefix('"') {
+            let end = rest.find('"')?;
+            let p = rest[..end].trim();
+            return (!p.is_empty()).then(|| PathBuf::from(p));
+        }
+        let p = s.split(" --").next().unwrap_or(s).trim();
+        (!p.is_empty()).then(|| PathBuf::from(p))
+    }
+
+    /// Does `path` resolve to the executable that is running?
+    /// A path that no longer exists counts as stale, not equal.
+    fn same_exe(path: &std::path::Path) -> bool {
+        let Ok(current) = std::env::current_exe() else {
+            return false;
+        };
+        let norm = |p: &std::path::Path| {
+            std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+        };
+        norm(path)
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&norm(&current).to_string_lossy())
+    }
+
+    /// Value of the first `<name>…</name>` element in `xml`.
+    fn xml_tag(xml: &str, name: &str) -> Option<String> {
+        let open = format!("<{name}>");
+        let close = format!("</{name}>");
+        let start = xml.find(&open)? + open.len();
+        let end = xml[start..].find(&close)? + start;
+        Some(xml[start..end].trim().to_string())
+    }
+
+    /// Target of a `.lnk`, read back through the shell.
+    fn shortcut_target(lnk: &std::path::Path) -> Option<String> {
+        use windows::core::{Interface, HSTRING};
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER,
+            COINIT_APARTMENTTHREADED, STGM_READ,
+        };
+        use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().ok()?;
+            let link: IShellLinkW =
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            let persist: IPersistFile = link.cast().ok()?;
+            persist
+                .Load(&HSTRING::from(lnk.to_string_lossy().as_ref()), STGM_READ)
+                .ok()?;
+            let mut buf = [0u16; 1024];
+            link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+            let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            Some(String::from_utf16_lossy(&buf[..len]))
+        }
     }
 
     /// Disable every autostart mechanism, then enable the requested one.
