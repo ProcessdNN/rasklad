@@ -187,6 +187,43 @@ impl App {
         worker: JoinHandle<()>,
         icon: Arc<egui::IconData>,
     ) -> Self {
+        // Verify the autostart entry at startup: the registry value, the
+        // shortcut or the scheduled task outlives the exe it points at, so
+        // after an update it can point at an old build or be an empty
+        // command left by an earlier version. Repairing it silently would
+        // hide the problem, so a note is kept for the Autostart window.
+        {
+            let shared = shared.clone();
+            std::thread::spawn(move || {
+                let method = shared.config.lock().unwrap().autostart;
+                if method == AutostartMethod::None {
+                    return;
+                }
+                let state = config::autostart_state(method);
+                crate::hook::debug_log(&format!("autostart check: {state:?}"));
+                if !state.is_broken() {
+                    // A stale-but-valid path is reported in the Autostart
+                    // window, not rewritten behind the user's back.
+                    if state.is_stale_but_valid() {
+                        if let Some(note) = state.message() {
+                            *shared.autostart_note.lock().unwrap() = Some(note);
+                        }
+                    }
+                    return;
+                }
+                let repaired = config::apply_autostart(method).is_ok();
+                crate::hook::debug_log(&format!("autostart repair: ok={repaired}"));
+                if let Some(note) = state.message() {
+                    let note = if repaired {
+                        note
+                    } else {
+                        format!("{note} (repair failed — re-apply manually)")
+                    };
+                    *shared.autostart_note.lock().unwrap() = Some(note);
+                }
+            });
+        }
+
         Self {
             shared,
             cmds,
@@ -234,6 +271,7 @@ impl App {
                 cfg.autostart = method;
                 let _ = config::save(&cfg);
                 self.autostart_status = None;
+                self.autostart_note = None;
             }
             Err(e) => self.autostart_status = Some(e.to_string()),
         }
@@ -415,6 +453,10 @@ impl App {
                             });
                     });
 
+                    if let Some(note) = &self.autostart_note {
+                        ui.add_space(6.0);
+                        ui.colored_label(egui::Color32::from_rgb(240, 180, 90), note.as_str());
+                    }
                     if let Some(err) = &self.autostart_status {
                         ui.add_space(6.0);
                         ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
