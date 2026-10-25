@@ -9,6 +9,9 @@ use crate::hotkey::Hotkey;
 pub enum CaptureResult {
     Captured(Hotkey),
     Cancelled,
+    /// The pressed combo is not usable as a hotkey; capture continues and
+    /// the UI shows this hint.
+    Rejected(&'static str),
 }
 
 /// State shared between the worker thread (hook + tray) and the egui thread.
@@ -20,6 +23,9 @@ pub struct Shared {
     pub capture: Mutex<Option<CaptureResult>>,
     /// Worker thread id, used for PostThreadMessage wakeups.
     pub worker_tid: AtomicU32,
+    /// One-off note about the autostart entry (stale path repaired at
+    /// startup, or a repair that failed).
+    pub autostart_note: Mutex<Option<String>>,
 }
 
 impl Shared {
@@ -29,6 +35,7 @@ impl Shared {
             capturing: AtomicBool::new(false),
             capture: Mutex::new(None),
             worker_tid: AtomicU32::new(0),
+            autostart_note: Mutex::new(None),
         }
     }
 }

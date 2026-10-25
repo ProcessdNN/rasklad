@@ -28,11 +28,29 @@ pub const VK_APPS: u32 = 0x5D;
 pub const VK_NUMLOCK: u32 = 0x90;
 pub const VK_SCROLL: u32 = 0x91;
 
-/// Keys that act as modifiers. Kept for unit tests; hook.rs uses its own
-/// modifier-bit mapping (`mod_bit`) for the fast path.
-#[cfg(test)]
+/// Keys that act as modifiers. A modifier on its own is never a valid
+/// hotkey, so capture ignores them as the "main" key.
 pub fn is_modifier(vk: u32) -> bool {
     matches!(vk, 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
+}
+
+/// Keys that make sense as a hotkey on their own, without any modifier:
+/// function keys, navigation/editing keys, media keys, Caps Lock.
+/// Everything else (letters, digits, Tab, Space, …) needs a modifier.
+pub fn is_standalone_ok(vk: u32) -> bool {
+    matches!(
+        vk,
+        VK_CAPITAL
+            | VK_PAUSE
+            | VK_SNAPSHOT
+            | VK_NUMLOCK
+            | VK_SCROLL
+            | 0x21..=0x28 // PageUp, PageDown, End, Home, arrows
+            | VK_INSERT
+            | VK_DELETE
+            | 0x70..=0x87 // F1..F24
+            | 0xA6..=0xB7 // browser / media / volume keys
+    )
 }
 
 /// Human-readable key name shown in the settings window.
