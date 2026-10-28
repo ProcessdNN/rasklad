@@ -13,7 +13,7 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIconBuilder};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::hook;
 use crate::shared::Shared;
@@ -70,17 +70,15 @@ pub fn run(
             &mi_quit,
         ]);
 
-        let (rgba, w, h) = icon_rgba;
-        let icon = Icon::from_rgba(rgba, w, h).expect("tray icon rgba");
-        let _tray = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("rasklad")
-            .with_icon(icon)
-            .with_menu_on_left_click(false)
-            .build()
-            .expect("tray icon");
+        let _tray = add_tray_icon(icon_rgba, menu);
 
-        let hhk = hook::install(shared.clone()).expect("keyboard hook");
+        let hhk = match hook::install(shared.clone()) {
+            Ok(hhk) => hhk,
+            Err(e) => {
+                crate::diag::log(&format!("keyboard hook failed: {e:?}"));
+                return;
+            }
+        };
         let _ = tid_tx.send(GetCurrentThreadId());
 
         let mut msg = MSG::default();
@@ -103,4 +101,45 @@ pub fn run(
 
         hook::uninstall(hhk);
     }
+}
+
+/// Add the notification-area icon, waiting for the shell to be ready.
+///
+/// Started by the logon task the process can come up before Explorer has
+/// created the notification area; `Shell_NotifyIcon` then fails with E_FAIL.
+/// That is a matter of a second or two, so retry instead of dying: a panic
+/// here greeted the user with a crash dialog on every logon.
+fn add_tray_icon(icon_rgba: (Vec<u8>, u32, u32), menu: Menu) -> Option<TrayIcon> {
+    let (rgba, width, height) = icon_rgba;
+    for attempt in 1..=80 {
+        let icon = match Icon::from_rgba(rgba.clone(), width, height) {
+            Ok(icon) => icon,
+            Err(e) => {
+                crate::diag::log(&format!("tray icon data rejected: {e:?}"));
+                return None;
+            }
+        };
+        match TrayIconBuilder::new()
+            .with_menu(Box::new(menu.clone()))
+            .with_tooltip("rasklad")
+            .with_icon(icon)
+            .with_menu_on_left_click(false)
+            .build()
+        {
+            Ok(tray) => {
+                if attempt > 1 {
+                    crate::diag::log(&format!("tray icon added on attempt {attempt}"));
+                }
+                return Some(tray);
+            }
+            Err(e) => {
+                if attempt == 1 || attempt % 20 == 0 {
+                    crate::diag::log(&format!("tray icon attempt {attempt} failed: {e:?}"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+    }
+    crate::diag::log("tray icon could not be added, continuing without it");
+    None
 }
