@@ -63,7 +63,8 @@ the app back after a reboot.
   not reach the application.
 - Press `Win+Caps` to toggle caps mode, or whichever combination is set in
   Advanced.
-- Left click the tray icon for settings, right click for the menu.
+- Left click the tray icon for settings, right click for the menu, middle
+  click to turn the hotkey on and off.
 
 ## Settings
 

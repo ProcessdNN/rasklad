@@ -15,7 +15,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::System::Threading::*;
 
 use tray_icon::menu::MenuEvent;
-use tray_icon::{MouseButton, TrayIconEvent};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 
 use crate::assets;
 use crate::config::{self, AutostartMethod, CapsCombo, Config};
@@ -1036,18 +1036,26 @@ fn spawn_events(
     std::thread::spawn(move || loop {
         let show_event = HANDLE(show_event as *mut _);
         while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
-            let left = matches!(
-                ev,
+            match ev {
+                // Toggle on release only: the press would otherwise undo it.
+                TrayIconEvent::Click {
+                    button: MouseButton::Middle,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    let on = !shared.config.lock().unwrap().enabled;
+                    worker::set_enabled(&shared, &cmds, on);
+                    ctx.request_repaint();
+                }
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
                     ..
-                } | TrayIconEvent::DoubleClick {
+                }
+                | TrayIconEvent::DoubleClick {
                     button: MouseButton::Left,
                     ..
-                }
-            );
-            if left {
-                show(&ctx);
+                } => show(&ctx),
+                _ => {}
             }
         }
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
