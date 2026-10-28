@@ -87,16 +87,39 @@ const USAGE: &str = concat!(
 /// parent console, so the text goes into a message box instead.
 fn print_out(text: &str) {
     use std::io::Write as _;
-    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    use windows::Win32::Storage::FileSystem::{
+        GetFileType, FILE_TYPE_CHAR, FILE_TYPE_DISK, FILE_TYPE_PIPE,
+    };
+    use windows::Win32::System::Console::{
+        AttachConsole, GetConsoleMode, GetStdHandle, ATTACH_PARENT_PROCESS, CONSOLE_MODE,
+        STD_OUTPUT_HANDLE,
+    };
 
-    // A redirected stdout - a pipe or a file - is inherited and works as is.
-    let mut stdout = std::io::stdout();
-    if stdout
-        .write_all(text.as_bytes())
-        .and_then(|_| stdout.flush())
-        .is_ok()
-    {
-        return;
+    // Writing to a handle that does not exist reports success on Windows, and
+    // a process started without a console is often handed NUL, which looks
+    // like a character device. Ask what the handle really is: a file or a
+    // pipe is a redirection and works, a character device only counts when it
+    // answers as a console.
+    let usable = unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE).unwrap_or_default();
+        match GetFileType(handle) {
+            FILE_TYPE_DISK | FILE_TYPE_PIPE => true,
+            FILE_TYPE_CHAR => {
+                let mut mode = CONSOLE_MODE::default();
+                GetConsoleMode(handle, &mut mode).is_ok()
+            }
+            _ => false,
+        }
+    };
+    if usable {
+        let mut stdout = std::io::stdout();
+        if stdout
+            .write_all(text.as_bytes())
+            .and_then(|_| stdout.flush())
+            .is_ok()
+        {
+            return;
+        }
     }
 
     // Otherwise borrow the console this was started from.
