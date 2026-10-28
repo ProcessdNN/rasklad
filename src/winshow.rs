@@ -54,33 +54,55 @@ fn find_main_window() -> Option<HWND> {
     }
 }
 
-/// Make the main window fully transparent.
-///
-/// eframe paints one frame before we get a chance to hide the window, and
-/// that frame is a white rectangle. Blending it away with a zero alpha means
-/// a `--minimized` start shows nothing at all, not even a flicker.
-pub fn fade_out() -> bool {
-    let Some(hwnd) = find_main_window() else {
-        return false;
-    };
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        SetWindowLongPtrW(
-            hwnd,
-            GWL_EXSTYLE,
-            style | WS_EX_LAYERED.0 as isize,
-        );
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA).is_ok()
-    }
-}
-
-/// Undo `fade_out`. Called before the window is shown for real.
-pub fn fade_in() {
+/// Move the window to the middle of the primary screen.
+pub fn center_main_window() {
     let Some(hwnd) = find_main_window() else {
         return;
     };
     unsafe {
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        let x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
+        let y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Top-left corner of the main window, for the startup log.
+pub fn main_window_position() -> Option<(i32, i32)> {
+    let hwnd = find_main_window()?;
+    unsafe {
+        let mut rect = RECT::default();
+        GetWindowRect(hwnd, &mut rect).ok()?;
+        Some((rect.left, rect.top))
+    }
+}
+
+/// Bring the window back on screen if it is parked outside it.
+pub fn ensure_on_screen() {
+    let Some(hwnd) = find_main_window() else {
+        return;
+    };
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+        if rect.left < -10_000 || rect.top < -10_000 {
+            center_main_window();
+        }
     }
 }
 

@@ -233,23 +233,21 @@ impl App {
         }
 
         if start_hidden {
-            // Two layers of defence. First make the window transparent, so
-            // the frame eframe paints before we can react is invisible.
-            if crate::winshow::fade_out() {
-                crate::diag::log("startup: window made transparent");
-            } else {
-                crate::diag::log("startup: could not make the window transparent");
-            }
-            // Then hide it natively as soon as it appears: a hidden window
-            // receives no further frames, so a viewport command alone would
-            // wait for the next repaint.
+            // The window is created off screen (see `run`), so the frame
+            // eframe paints before we can hide it lands where nobody looks.
+            // Hiding it natively is the only reliable way: a hidden window
+            // gets no further frames, so a viewport command would wait for
+            // the next repaint.
             std::thread::spawn(|| {
                 let started = std::time::Instant::now();
                 for _ in 0..300 {
                     if crate::winshow::hide_main_window_if_visible() {
-                        crate::winshow::fade_in();
+                        let at = crate::winshow::main_window_position()
+                            .map(|(x, y)| format!("{x},{y}"))
+                            .unwrap_or_else(|| "?".into());
+                        crate::winshow::center_main_window();
                         crate::diag::log(&format!(
-                            "startup: window hidden after {} ms",
+                            "startup: window hidden after {} ms (was at {at})",
                             started.elapsed().as_millis()
                         ));
                         return;
@@ -914,9 +912,8 @@ fn spawn_events(
     show_event: usize,
 ) {
     let show = |ctx: &egui::Context| {
-        // A --minimized start fades the window out; undo that before showing
-        // it, otherwise it would stay invisible.
-        crate::winshow::fade_in();
+        // A --minimized start parks the window outside the screen.
+        crate::winshow::ensure_on_screen();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -987,13 +984,21 @@ pub fn run(
     // when running elevated.
     let height = if elevation::is_elevated() { 140.0 } else { 200.0 };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Rasklad")
+        .with_inner_size([340.0, height])
+        .with_resizable(false)
+        .with_visible(visible)
+        .with_icon(icon.clone());
+    if !visible {
+        // eframe paints one frame before we can hide the window. Park it far
+        // outside the screen so that frame lands where nobody looks; it is
+        // moved to the centre right after being hidden.
+        viewport = viewport.with_position(egui::pos2(-32_000.0, -32_000.0));
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Rasklad")
-            .with_inner_size([340.0, height])
-            .with_resizable(false)
-            .with_visible(visible)
-            .with_icon(icon.clone()),
+        viewport,
         ..Default::default()
     };
 
