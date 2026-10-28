@@ -125,6 +125,15 @@ impl ChildWindow {
     }
 }
 
+/// Clears the "applying" hint when the worker leaves, however it leaves.
+struct PendingGuard(Arc<Shared>);
+
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        self.0.autostart_pending.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Space kept under the last widget of a child window.
 const WINDOW_BOTTOM_PADDING: f32 = 12.0;
 
@@ -295,7 +304,7 @@ impl App {
             // the next repaint.
             std::thread::spawn(|| {
                 let started = std::time::Instant::now();
-                for _ in 0..300 {
+                for _ in 0..1000 {
                     if crate::winshow::hide_main_window_if_visible() {
                         let at = crate::winshow::main_window_position()
                             .map(|(x, y)| format!("{x},{y}"))
@@ -398,6 +407,8 @@ impl App {
         let ctx = ctx.clone();
         shared.autostart_pending.store(true, Ordering::SeqCst);
         std::thread::spawn(move || {
+            // Clears the hint even if this thread panics half way through.
+            let _pending = PendingGuard(shared.clone());
             // Every method shells out to schtasks or writes the registry, so
             // none of it belongs on the thread that draws the window.
             let outcome = if method.requires_admin() && !elevation::is_elevated() {
@@ -425,7 +436,6 @@ impl App {
                 }
             };
 
-            shared.autostart_pending.store(false, Ordering::SeqCst);
             match outcome {
                 Ok(()) => {
                     crate::diag::log(&format!("autostart applied: {}", method.key()));
