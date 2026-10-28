@@ -36,6 +36,10 @@ struct Launch {
     wait_primary: bool,
     /// `--apply-autostart <key>`: one-shot privileged helper.
     apply_autostart: Option<String>,
+    /// `--version`: print the version and exit.
+    version: bool,
+    /// `--help`: print the usage and exit.
+    help: bool,
 }
 
 fn parse_launch<I, S>(args: I) -> Launch
@@ -55,6 +59,61 @@ where
         debug: has("--debug"),
         wait_primary: has("--elevated"),
         apply_autostart,
+        version: has("--version") || has("-V"),
+        help: has("--help") || has("-h"),
+    }
+}
+
+const USAGE: &str = concat!(
+    "rasklad ",
+    env!("CARGO_PKG_VERSION"),
+    " - keyboard layout switcher for Windows\n\
+     \n\
+     Usage: rasklad [options]\n\
+     \n\
+     \x20 --minimized          start in the tray without opening the window\n\
+     \x20 --debug              write the diagnostic log for this run\n\
+     \x20 --version            print the version and exit\n\
+     \x20 --help               print this text and exit\n\
+     \n\
+     Without arguments the settings window opens. Autostart passes --minimized.\n"
+);
+
+/// Write to the console this process was started from.
+///
+/// The exe is built for the windows subsystem, so it has no console of its
+/// own and `println!` would go nowhere. Attaching to the parent console makes
+/// `rasklad --version` work from cmd; started from Explorer there is no
+/// parent console, so the text goes into a message box instead.
+fn print_out(text: &str) {
+    use std::io::Write as _;
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+    // A redirected stdout - a pipe or a file - is inherited and works as is.
+    let mut stdout = std::io::stdout();
+    if stdout
+        .write_all(text.as_bytes())
+        .and_then(|_| stdout.flush())
+        .is_ok()
+    {
+        return;
+    }
+
+    // Otherwise borrow the console this was started from.
+    let attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS).is_ok() };
+    if attached {
+        if let Ok(mut out) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+            let _ = out.write_all(text.as_bytes());
+            return;
+        }
+    }
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+            None,
+            &windows::core::HSTRING::from(text),
+            &windows::core::HSTRING::from("Rasklad"),
+            windows::Win32::UI::WindowsAndMessaging::MB_OK,
+        );
     }
 }
 
@@ -70,6 +129,15 @@ fn main() {
     let minimized = launch.minimized;
     let wait_primary = launch.wait_primary;
     let debug = launch.debug;
+
+    if launch.help {
+        print_out(USAGE);
+        return;
+    }
+    if launch.version {
+        print_out(&format!("rasklad {}\n", env!("CARGO_PKG_VERSION")));
+        return;
+    }
 
     diag::install_panic_hook();
     diag::init(debug);
@@ -155,6 +223,16 @@ mod tests {
         assert!(launch.debug);
         assert!(launch.wait_primary);
         assert!(!launch.minimized);
+    }
+
+    #[test]
+    fn parses_version_and_help() {
+        assert!(parse_launch(["rasklad.exe", "--version"]).version);
+        assert!(parse_launch(["rasklad.exe", "-V"]).version);
+        assert!(parse_launch(["rasklad.exe", "--help"]).help);
+        assert!(parse_launch(["rasklad.exe", "-h"]).help);
+        let plain = parse_launch(["rasklad.exe"]);
+        assert!(!plain.version && !plain.help);
     }
 
     #[test]
