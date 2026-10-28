@@ -100,21 +100,30 @@ fn print_out(text: &str) {
     // like a character device. Ask what the handle really is: a file or a
     // pipe is a redirection and works, a character device only counts when it
     // answers as a console.
-    let usable = unsafe {
+    let (usable, is_console) = unsafe {
         let handle = GetStdHandle(STD_OUTPUT_HANDLE).unwrap_or_default();
         match GetFileType(handle) {
-            FILE_TYPE_DISK | FILE_TYPE_PIPE => true,
+            FILE_TYPE_DISK | FILE_TYPE_PIPE => (true, false),
             FILE_TYPE_CHAR => {
                 let mut mode = CONSOLE_MODE::default();
-                GetConsoleMode(handle, &mut mode).is_ok()
+                let console = GetConsoleMode(handle, &mut mode).is_ok();
+                (console, console)
             }
-            _ => false,
+            _ => (false, false),
         }
     };
     if usable {
+        // A console is a shell that has already printed its prompt: the
+        // command returns before this process writes anything, so start on a
+        // fresh line instead of gluing the text to the prompt.
+        let payload = if is_console {
+            format!("\r\n{text}")
+        } else {
+            text.to_string()
+        };
         let mut stdout = std::io::stdout();
         if stdout
-            .write_all(text.as_bytes())
+            .write_all(payload.as_bytes())
             .and_then(|_| stdout.flush())
             .is_ok()
         {
