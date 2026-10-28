@@ -55,6 +55,11 @@ pub fn init(on: bool) {
     }
 }
 
+/// Folder holding the log file, for the button in Advanced.
+pub fn log_dir() -> Option<PathBuf> {
+    path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
 pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }

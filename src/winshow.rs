@@ -125,6 +125,27 @@ pub fn hide_main_window_if_visible() -> bool {
     }
 }
 
+/// Open a folder in Explorer. Returns false when the shell refused.
+pub fn open_folder(path: &std::path::Path) -> bool {
+    use windows::core::{w, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let target = HSTRING::from(path.to_string_lossy().as_ref());
+    unsafe {
+        (ShellExecuteW(
+            None,
+            w!("open"),
+            &target,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+        .0 as usize)
+            > 32
+    }
+}
+
 /// Restore + show the main window and force it into the foreground.
 pub fn raise_main_window() {
     let Some(hwnd) = find_main_window() else { return };

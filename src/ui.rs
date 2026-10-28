@@ -125,6 +125,37 @@ impl ChildWindow {
     }
 }
 
+/// A small folder glyph that opens the log folder.
+fn folder_button(ui: &mut egui::Ui) -> egui::Response {
+    let size = egui::vec2(17.0, 15.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if response.hovered() {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let painter = ui.painter();
+        // Tab on the left, body below it: reads as a folder at this size.
+        let tab = egui::Rect::from_min_size(
+            rect.min + egui::vec2(1.0, 0.0),
+            egui::vec2(size.x * 0.42, size.y * 0.30),
+        );
+        painter.rect_filled(tab, 1.0, color);
+        let body = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + 1.0, rect.min.y + size.y * 0.22),
+            egui::pos2(rect.max.x - 1.0, rect.max.y),
+        );
+        painter.rect_stroke(
+            body,
+            2.0,
+            egui::Stroke::new(1.2, color),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response.on_hover_text("Open the log folder")
+}
+
 /// Clears the "applying" hint when the worker leaves, however it leaves.
 struct PendingGuard(Arc<Shared>);
 
@@ -580,12 +611,20 @@ impl App {
                     ui.add_space(6.0);
 
                     let mut logging = crate::diag::is_enabled();
-                    if ui
-                        .checkbox(&mut logging, "Debug log (this session only)")
-                        .changed()
-                    {
-                        crate::diag::enable(logging);
-                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .checkbox(&mut logging, "Debug log (this session only)")
+                            .changed()
+                        {
+                            crate::diag::enable(logging);
+                        }
+                        // Only useful while there is something in the file.
+                        if logging && folder_button(ui).clicked() {
+                            if let Some(dir) = crate::diag::log_dir() {
+                                crate::winshow::open_folder(&dir);
+                            }
+                        }
+                    });
                     ui.add_space(4.0);
                     if ui.button("Copy diagnostics").clicked() {
                         // Building the report asks the Task Scheduler about the
