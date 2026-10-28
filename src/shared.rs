@@ -29,6 +29,9 @@ pub struct Shared {
     /// An elevated helper is running: the Autostart window shows a waiting
     /// hint until the helper exits.
     pub autostart_pending: AtomicBool,
+    /// Last autostart failure, shown in red until the window is reopened or
+    /// an apply succeeds.
+    pub autostart_error: Mutex<Option<String>>,
 }
 
 impl Shared {
@@ -40,6 +43,7 @@ impl Shared {
             worker_tid: AtomicU32::new(0),
             autostart_note: Mutex::new(None),
             autostart_pending: AtomicBool::new(false),
+            autostart_error: Mutex::new(None),
         }
     }
 }

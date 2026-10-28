@@ -196,7 +196,7 @@ pub struct App {
     admin_status: Option<String>,
     autostart_open: bool,
     autostart_sel: AutostartMethod,
-    autostart_status: Option<String>,
+
     /// One-off note from the startup autostart check (stale path repaired).
     autostart_note: Option<String>,
     autostart_win: ChildWindow,
@@ -260,13 +260,26 @@ impl App {
                 let repaired =
                     allowed && config::apply_autostart(method, start_minimized).is_ok();
                 crate::diag::log(&format!("autostart repair: ok={repaired}"));
-                if let Some(note) = state.message() {
-                    let note = if repaired {
-                        note
-                    } else {
-                        format!("{note} (repair failed — re-apply manually)")
-                    };
-                    *shared.autostart_note.lock().unwrap() = Some(note);
+                match (allowed, repaired) {
+                    // Nothing was attempted, so this is not a failure - just
+                    // something the user has to do.
+                    (false, _) => {
+                        let note = state
+                            .message()
+                            .unwrap_or_else(|| "Autostart entry needs attention.".into());
+                        *shared.autostart_note.lock().unwrap() =
+                            Some(format!("{note} Needs administrator rights to repair."));
+                    }
+                    (true, true) => {
+                        *shared.autostart_note.lock().unwrap() = state.message();
+                    }
+                    (true, false) => {
+                        let note = state
+                            .message()
+                            .unwrap_or_else(|| "Autostart entry is broken.".into());
+                        *shared.autostart_error.lock().unwrap() =
+                            Some(format!("{note} Repair failed — re-apply it by hand."));
+                    }
                 }
             });
         }
@@ -316,7 +329,7 @@ impl App {
             admin_status: None,
             autostart_open: false,
             autostart_sel: AutostartMethod::RegistryRun,
-            autostart_status: None,
+
             autostart_note: None,
             autostart_win: ChildWindow::default(),
             advanced_open: false,
@@ -348,14 +361,10 @@ impl App {
     }
 
     fn set_autostart(&mut self, ctx: &egui::Context, method: AutostartMethod) {
-        // Write first: the elevated helper applies whatever the config says.
-        let start_minimized = {
-            let mut cfg = self.shared.config.lock().unwrap();
-            cfg.autostart = method;
-            let _ = config::save(&cfg);
-            cfg.start_minimized
-        };
-        self.autostart_status = None;
+        // The method is recorded only once the entry really exists, so the
+        // window can never claim an autostart that is not there.
+        let start_minimized = self.shared.config.lock().unwrap().start_minimized;
+        *self.shared.autostart_error.lock().unwrap() = None;
         self.apply_autostart(ctx, method, start_minimized);
     }
 
@@ -383,7 +392,6 @@ impl App {
     ) {
         let shared = self.shared.clone();
         let ctx = ctx.clone();
-        self.autostart_status = None;
         shared.autostart_pending.store(true, Ordering::SeqCst);
         std::thread::spawn(move || {
             // Every method shells out to schtasks or writes the registry, so
@@ -392,28 +400,45 @@ impl App {
                 let args = format!("--apply-autostart {}", method.key());
                 let ok = elevation::run_elevated_wait(&args);
                 crate::diag::log(&format!("autostart helper finished: ok={ok}"));
+                // No retry here: a second attempt would only show the UAC
+                // prompt again.
                 if ok {
                     Ok(())
                 } else {
                     Err("administrator rights were not granted".to_string())
                 }
             } else {
+                // A second attempt costs nothing and covers a transient
+                // schtasks or antivirus hiccup.
                 match config::apply_autostart(method, start_minimized) {
-                    Ok(()) => {
-                        crate::diag::log(&format!("autostart applied: {}", method.key()));
-                        Ok(())
-                    }
-                    Err(e) => {
-                        crate::diag::log(&format!("autostart failed: {e}"));
-                        Err(e.to_string())
+                    Ok(()) => Ok(()),
+                    Err(first) => {
+                        crate::diag::log(&format!("autostart failed, retrying: {first}"));
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                        config::apply_autostart(method, start_minimized)
+                            .map_err(|second| format!("{second}"))
                     }
                 }
             };
+
             shared.autostart_pending.store(false, Ordering::SeqCst);
-            *shared.autostart_note.lock().unwrap() = Some(match outcome {
-                Ok(()) => "Autostart updated.".to_string(),
-                Err(e) => format!("Autostart was not updated: {e}"),
-            });
+            match outcome {
+                Ok(()) => {
+                    crate::diag::log(&format!("autostart applied: {}", method.key()));
+                    {
+                        let mut cfg = shared.config.lock().unwrap();
+                        cfg.autostart = method;
+                        let _ = config::save(&cfg);
+                    }
+                    *shared.autostart_error.lock().unwrap() = None;
+                    *shared.autostart_note.lock().unwrap() = Some("Autostart updated.".to_string());
+                }
+                Err(e) => {
+                    crate::diag::log(&format!("autostart failed: {e}"));
+                    *shared.autostart_error.lock().unwrap() =
+                        Some(format!("Autostart was not updated: {e}"));
+                }
+            }
             ctx.request_repaint();
         });
     }
@@ -592,8 +617,7 @@ impl App {
                     // The note is a one-off answer to the last action; keep
                     // it for this visit only.
                     self.autostart_note = None;
-                    self.autostart_status = None;
-                    *self.shared.autostart_note.lock().unwrap() = None;
+                                *self.shared.autostart_note.lock().unwrap() = None;
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.add_space(2.0);
@@ -673,9 +697,9 @@ impl App {
                         ui.add_space(6.0);
                         ui.colored_label(egui::Color32::from_rgb(240, 180, 90), note.as_str());
                     }
-                    if let Some(err) = &self.autostart_status {
+                    if let Some(err) = self.shared.autostart_error.lock().unwrap().as_deref() {
                         ui.add_space(6.0);
-                        ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
+                        ui.colored_label(egui::Color32::LIGHT_RED, err);
                     }
                     fit_height(ctx, ui, width);
                 });
@@ -780,7 +804,12 @@ impl App {
         if let Some(action) = chosen {
             self.menu_open = false;
             match action {
-                MenuAction::Autostart => self.autostart_open = true,
+                MenuAction::Autostart => {
+                    // A failure belongs to the last attempt, not to the
+                    // state of the world.
+                    *self.shared.autostart_error.lock().unwrap() = None;
+                    self.autostart_open = true;
+                }
                 MenuAction::Advanced => self.advanced_open = true,
                 MenuAction::Exit => self.quit(),
             }
