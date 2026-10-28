@@ -13,7 +13,16 @@ use windows::Win32::System::Threading::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const TITLE: &[u16] = &[b'R' as u16, b'a' as u16, b's' as u16, b'k' as u16, b'l' as u16, b'a' as u16, b'd' as u16, 0];
+const TITLE: &[u16] = &[
+    b'R' as u16,
+    b'a' as u16,
+    b's' as u16,
+    b'k' as u16,
+    b'l' as u16,
+    b'a' as u16,
+    b'd' as u16,
+    0,
+];
 
 struct EnumCtx {
     pid: u32,
@@ -148,14 +157,15 @@ pub fn open_folder(path: &std::path::Path) -> bool {
 
 /// Restore + show the main window and force it into the foreground.
 pub fn raise_main_window() {
-    let Some(hwnd) = find_main_window() else { return };
+    let Some(hwnd) = find_main_window() else {
+        return;
+    };
     unsafe {
         let fg = GetForegroundWindow();
         let fg_tid = GetWindowThreadProcessId(fg, None);
         let my_tid = GetCurrentThreadId();
-        let attached = fg_tid != 0
-            && fg_tid != my_tid
-            && AttachThreadInput(my_tid, fg_tid, true).as_bool();
+        let attached =
+            fg_tid != 0 && fg_tid != my_tid && AttachThreadInput(my_tid, fg_tid, true).as_bool();
 
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);

@@ -29,8 +29,16 @@ fn main() {
 
     // Forward slashes: the resource compiler treats a backslash inside a
     // string literal as an escape.
-    let icon = root.join("assets/icon.ico").display().to_string().replace('\\', "/");
-    let manifest = root.join("rasklad.exe.manifest").display().to_string().replace('\\', "/");
+    let icon = root
+        .join("assets/icon.ico")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let manifest = root
+        .join("rasklad.exe.manifest")
+        .display()
+        .to_string()
+        .replace('\\', "/");
 
     let mut rc = String::new();
     let _ = writeln!(rc, "1 ICON \"{icon}\"");
@@ -45,7 +53,10 @@ fn main() {
     let _ = writeln!(rc, "  BEGIN");
     let _ = writeln!(rc, "    BLOCK \"040904B0\"");
     let _ = writeln!(rc, "    BEGIN");
-    let _ = writeln!(rc, "      VALUE \"FileDescription\", \"Rasklad - keyboard layout switcher\"");
+    let _ = writeln!(
+        rc,
+        "      VALUE \"FileDescription\", \"Rasklad - keyboard layout switcher\""
+    );
     let _ = writeln!(rc, "      VALUE \"FileVersion\", \"{version}\"");
     let _ = writeln!(rc, "      VALUE \"InternalName\", \"rasklad\"");
     let _ = writeln!(rc, "      VALUE \"OriginalFilename\", \"rasklad.exe\"");

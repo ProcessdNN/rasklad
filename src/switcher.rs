@@ -51,10 +51,7 @@ fn switch_via_message() -> bool {
         let Some(next) = next_layout(GetKeyboardLayout(tid)) else {
             return false;
         };
-        crate::diag::log(&format!(
-            "switch: fg={:?} next={:?}",
-            fg.0, next.0
-        ));
+        crate::diag::log(&format!("switch: fg={:?} next={:?}", fg.0, next.0));
         if PostMessageW(
             Some(fg),
             WM_INPUTLANGCHANGEREQUEST,

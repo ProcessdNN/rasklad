@@ -45,11 +45,7 @@ impl AutostartMethod {
         }
     }
 
-    pub const ALL: [Self; 3] = [
-        Self::RegistryRun,
-        Self::StartupFolder,
-        Self::ScheduledTask,
-    ];
+    pub const ALL: [Self; 3] = [Self::RegistryRun, Self::StartupFolder, Self::ScheduledTask];
 
     pub fn title(&self) -> &'static str {
         match self {
@@ -349,9 +345,8 @@ mod imp {
         let Ok(current) = std::env::current_exe() else {
             return false;
         };
-        let norm = |p: &std::path::Path| {
-            std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
-        };
+        let norm =
+            |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         norm(path)
             .to_string_lossy()
             .eq_ignore_ascii_case(&norm(&current).to_string_lossy())
@@ -469,8 +464,7 @@ mod imp {
         if value.contains("rasklad") {
             Ok(())
         } else {
-            Err(io::Error::other("Run entry missing after write",
-            ))
+            Err(io::Error::other("Run entry missing after write"))
         }
     }
 
@@ -490,16 +484,11 @@ mod imp {
 
     /// `schtasks /Query` succeeding proves the task exists.
     fn verify_task() -> io::Result<()> {
-        let out = schtasks(&[
-            "/Query".into(),
-            "/TN".into(),
-            TASK_NAME.into(),
-        ])?;
+        let out = schtasks(&["/Query".into(), "/TN".into(), TASK_NAME.into()])?;
         if out.status.success() {
             Ok(())
         } else {
-            Err(io::Error::other("task missing after creation",
-            ))
+            Err(io::Error::other("task missing after creation"))
         }
     }
 
@@ -509,8 +498,7 @@ mod imp {
         use winreg::RegKey;
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (key, _) =
-            hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")?;
+        let (key, _) = hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")?;
         if enable {
             let exe = std::env::current_exe()?;
             key.set_value("rasklad", &launch_command(&exe, start_minimized))?;
@@ -555,7 +543,9 @@ mod imp {
         }
 
         unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().map_err(into)?;
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+                .ok()
+                .map_err(into)?;
             let link: IShellLinkW =
                 CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(into)?;
             let exe = std::env::current_exe()?;
@@ -608,7 +598,10 @@ mod imp {
             let joined = task_args(std::path::Path::new(EXE), true).join(" ");
             assert!(joined.contains("/RL HIGHEST"), "{joined}");
             assert!(joined.contains("/SC ONLOGON"), "{joined}");
-            assert!(joined.contains(&format!("\"{EXE}\" --minimized")), "{joined}");
+            assert!(
+                joined.contains(&format!("\"{EXE}\" --minimized")),
+                "{joined}"
+            );
         }
 
         #[test]
@@ -640,11 +633,10 @@ mod imp {
             Ok(())
         } else {
             Err(io::Error::other(format!(
-                    "schtasks {} failed: {}",
-                    op,
-                    String::from_utf8_lossy(&out.stderr)
-                ),
-            ))
+                "schtasks {} failed: {}",
+                op,
+                String::from_utf8_lossy(&out.stderr)
+            )))
         }
     }
 }

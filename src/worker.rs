@@ -64,11 +64,7 @@ pub fn run(
         let menu = Menu::new();
         let mi_enabled = CheckMenuItem::with_id(menu_id::ENABLED, "Enabled", true, enabled, None);
         let mi_quit = MenuItem::with_id(menu_id::QUIT, "Quit", true, None);
-        let _ = menu.append_items(&[
-            &mi_enabled,
-            &PredefinedMenuItem::separator(),
-            &mi_quit,
-        ]);
+        let _ = menu.append_items(&[&mi_enabled, &PredefinedMenuItem::separator(), &mi_quit]);
 
         let _tray = add_tray_icon(icon_rgba, menu);
 

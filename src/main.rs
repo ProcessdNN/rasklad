@@ -193,7 +193,13 @@ fn main() {
         std::process::exit(1);
     }
 
-    ui::run(shared.clone(), cmd_tx.clone(), worker, show_event, !minimized);
+    ui::run(
+        shared.clone(),
+        cmd_tx.clone(),
+        worker,
+        show_event,
+        !minimized,
+    );
 
     // eframe returned: make sure the worker loop is torn down too.
     let _ = cmd_tx.send(worker::WorkerCmd::Shutdown);
@@ -240,6 +246,8 @@ mod tests {
         let launch = parse_launch(["rasklad.exe", "--apply-autostart", "task"]);
         assert_eq!(launch.apply_autostart.as_deref(), Some("task"));
         // A missing value must not be mistaken for a method.
-        assert!(parse_launch(["rasklad.exe", "--apply-autostart"]).apply_autostart.is_none());
+        assert!(parse_launch(["rasklad.exe", "--apply-autostart"])
+            .apply_autostart
+            .is_none());
     }
 }

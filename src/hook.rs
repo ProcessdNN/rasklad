@@ -110,13 +110,12 @@ fn mods_for(vk_code: u32) -> Modifiers {
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        let self_injected = (kb.flags & LLKHF_INJECTED).0 != 0
-            && kb.dwExtraInfo == switcher::INJECTED_TAG;
+        let self_injected =
+            (kb.flags & LLKHF_INJECTED).0 != 0 && kb.dwExtraInfo == switcher::INJECTED_TAG;
         if !self_injected {
             if let Some(shared) = SHARED.get() {
                 let vk_code = kb.vkCode;
-                let down =
-                    wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize;
+                let down = wparam.0 == WM_KEYDOWN as usize || wparam.0 == WM_SYSKEYDOWN as usize;
 
                 if shared.capturing.load(Ordering::SeqCst) {
                     // Capture mode: the last real key pressed becomes the
@@ -134,8 +133,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                             CAP_KEY.with(|k| k.set(vk_code));
                             CAP_MODS.with(|c| c.set(held_mods() & !mod_bit(vk_code)));
                         }
-                    } else if CAP_KEY.with(|k| k.get()) == vk_code
-                        && CAP_KEY.with(|k| k.get()) != 0
+                    } else if CAP_KEY.with(|k| k.get()) == vk_code && CAP_KEY.with(|k| k.get()) != 0
                     {
                         let m = modifiers_of(CAP_MODS.with(|m| m.get()));
                         CAP_KEY.with(|k| k.set(0));
@@ -214,7 +212,12 @@ pub fn install(shared: Arc<Shared>) -> windows::core::Result<HHOOK> {
     let _ = SHARED.set(shared);
     unsafe {
         let hmod = GetModuleHandleW(PCWSTR::null())?;
-        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(HINSTANCE(hmod.0)), 0);
+        let hook = SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(keyboard_proc),
+            Some(HINSTANCE(hmod.0)),
+            0,
+        );
         match &hook {
             Ok(h) => crate::diag::log(&format!("hook installed {:?}", h.0)),
             Err(e) => crate::diag::log(&format!("hook install FAILED: {e:?}")),

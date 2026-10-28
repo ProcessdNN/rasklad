@@ -22,8 +22,8 @@ use crate::config::{self, AutostartMethod, CapsCombo, Config};
 use crate::elevation;
 use crate::hotkey::Hotkey;
 use crate::shared::{CaptureResult, Shared};
-use crate::worker::{self, menu_id, WorkerCmd};
 use crate::winshow;
+use crate::worker::{self, menu_id, WorkerCmd};
 
 /// The standard egui toggle switch (as in the egui demo): an animated
 /// pill with a sliding knob.
@@ -192,18 +192,16 @@ fn fit_height(ctx: &egui::Context, ui: &egui::Ui, width: f32) {
             "window fit: {:.0} -> {target:.0} px",
             inner.height()
         ));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            width, target,
-        )));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, target)));
     }
 }
 
 /// Hyperlink-styled label: light gray, easing to white on hover.
 fn link_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let font_id = egui::FontId::proportional(13.5);
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE);
     let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
     let t = ui.ctx().animate_value_with_time(
         response.id,
@@ -300,8 +298,7 @@ impl App {
                 // Recreating the logon task needs administrator rights; a
                 // background repair cannot ask for them.
                 let allowed = !method.requires_admin() || elevation::is_elevated();
-                let repaired =
-                    allowed && config::apply_autostart(method, start_minimized).is_ok();
+                let repaired = allowed && config::apply_autostart(method, start_minimized).is_ok();
                 crate::diag::log(&format!("autostart repair: ok={repaired}"));
                 match (allowed, repaired) {
                     // Nothing was attempted, so this is not a failure - just
@@ -567,8 +564,7 @@ impl App {
             .with_icon(self.icon.clone());
         if let Some(outer) = ctx.input(|i| i.viewport().outer_rect) {
             let c = outer.center();
-            builder = builder
-                .with_position(egui::pos2(c.x - size[0] / 2.0, c.y - size[1] / 2.0));
+            builder = builder.with_position(egui::pos2(c.x - size[0] / 2.0, c.y - size[1] / 2.0));
         }
         builder
     }
@@ -598,7 +594,9 @@ impl App {
                             .selected_text(cfg.caps_combo.title())
                             .show_ui(ui, |ui| {
                                 for c in CapsCombo::ALL {
-                                    if ui.selectable_label(cfg.caps_combo == c, c.title()).clicked()
+                                    if ui
+                                        .selectable_label(cfg.caps_combo == c, c.title())
+                                        .clicked()
                                     {
                                         self.set_caps_combo(c);
                                     }
@@ -670,7 +668,7 @@ impl App {
                     // The note is a one-off answer to the last action; keep
                     // it for this visit only.
                     self.autostart_note = None;
-                                *self.shared.autostart_note.lock().unwrap() = None;
+                    *self.shared.autostart_note.lock().unwrap() = None;
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.add_space(2.0);
@@ -947,7 +945,10 @@ impl eframe::App for App {
             // No in-window title — the title bar already says "Rasklad".
             // The ⋯ button shares the subtitle row so no dead strip is left.
             ui.horizontal(|ui| {
-                ui.add(egui::Label::new("Switch keyboard layout with a custom hotkey.").selectable(true));
+                ui.add(
+                    egui::Label::new("Switch keyboard layout with a custom hotkey.")
+                        .selectable(true),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // The menu is drawn by `menu_popup` — a measured width,
                     // so labels never wrap, and anchored to this button.
@@ -1012,13 +1013,12 @@ impl eframe::App for App {
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(4.0);
-            ui.add(egui::Label::new(
-                "Lives in the system tray.",
-            ).selectable(true));
+            ui.add(egui::Label::new("Lives in the system tray.").selectable(true));
             if !self.elevated {
-                ui.add(egui::Label::new(
-                    "Not running as administrator — layout switching",
-                ).selectable(true));
+                ui.add(
+                    egui::Label::new("Not running as administrator — layout switching")
+                        .selectable(true),
+                );
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new("won't work in elevated windows.").selectable(true));
                     if link_label(ui, "relaunch as admin").clicked() {
@@ -1026,8 +1026,7 @@ impl eframe::App for App {
                             self.quit();
                         } else {
                             self.admin_status = Some(
-                                "relaunch failed — UAC prompt was declined or blocked"
-                                    .to_string(),
+                                "relaunch failed — UAC prompt was declined or blocked".to_string(),
                             );
                         }
                     }
@@ -1155,7 +1154,11 @@ pub fn run(
 
     // The admin warning takes ~60px at the bottom — don't reserve it
     // when running elevated.
-    let height = if elevation::is_elevated() { 140.0 } else { 200.0 };
+    let height = if elevation::is_elevated() {
+        140.0
+    } else {
+        200.0
+    };
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Rasklad")
@@ -1181,8 +1184,14 @@ pub fn run(
         options,
         Box::new(move |cc| {
             // Only explanatory text is selectable; button/field labels aren't.
-            cc.egui_ctx.style_mut(|s| s.interaction.selectable_labels = false);
-            spawn_events(cc.egui_ctx.clone(), shared.clone(), app_cmds, show_event.0 as usize);
+            cc.egui_ctx
+                .style_mut(|s| s.interaction.selectable_labels = false);
+            spawn_events(
+                cc.egui_ctx.clone(),
+                shared.clone(),
+                app_cmds,
+                show_event.0 as usize,
+            );
             Ok(Box::new(App::new(shared, cmds, worker, icon, !visible)))
         }),
     );
@@ -1195,7 +1204,9 @@ fn record_key_list() -> &'static [u32] {
     use std::sync::OnceLock;
     static KEYS: OnceLock<Vec<u32>> = OnceLock::new();
     KEYS.get_or_init(|| {
-        let mut v = vec![0x08, 0x09, 0x0D, 0x13, 0x14, 0x1B, 0x20, 0x2C, 0x2D, 0x2E, 0x90, 0x91];
+        let mut v = vec![
+            0x08, 0x09, 0x0D, 0x13, 0x14, 0x1B, 0x20, 0x2C, 0x2D, 0x2E, 0x90, 0x91,
+        ];
         v.extend(0x21..=0x28); // PgUp..Down, arrows
         v.extend(0x30..=0x39); // digits
         v.extend(0x41..=0x5A); // letters

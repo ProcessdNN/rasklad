@@ -128,9 +128,8 @@ pub fn install_panic_hook() {
         let where_to = path()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "(no log path available)".to_string());
-        let body = format!(
-            "Rasklad stopped unexpectedly.\n\n{info}\n\nThe log was saved to:\n{where_to}"
-        );
+        let body =
+            format!("Rasklad stopped unexpectedly.\n\n{info}\n\nThe log was saved to:\n{where_to}");
         unsafe {
             MessageBoxW(
                 None,
@@ -165,11 +164,18 @@ pub fn report(cfg: &Config) -> String {
     let _ = writeln!(
         out,
         "Autostart state: {}",
-        config::autostart_state(cfg.autostart).message().unwrap_or_else(|| "ok".into())
+        config::autostart_state(cfg.autostart)
+            .message()
+            .unwrap_or_else(|| "ok".into())
     );
     match path() {
         Some(p) => {
-            let _ = writeln!(out, "Log file: {} ({})", p.display(), if is_enabled() { "on" } else { "off" });
+            let _ = writeln!(
+                out,
+                "Log file: {} ({})",
+                p.display(),
+                if is_enabled() { "on" } else { "off" }
+            );
         }
         None => {
             let _ = writeln!(out, "Log file: (none)");

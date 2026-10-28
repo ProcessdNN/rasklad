@@ -98,7 +98,11 @@ mod tests {
         for size in [16, 20, 24, 32, 40, 48, 64, 128, 256] {
             let (rgba, w, h) = icon_rgba(size);
             assert_eq!((w, h), (size, size), "frame {size} has the wrong size");
-            assert_eq!(rgba.len(), (size * size * 4) as usize, "frame {size} buffer");
+            assert_eq!(
+                rgba.len(),
+                (size * size * 4) as usize,
+                "frame {size} buffer"
+            );
             assert!(
                 rgba.chunks_exact(4).any(|p| p[3] > 0),
                 "frame {size} is fully transparent"

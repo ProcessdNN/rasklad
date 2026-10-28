@@ -42,12 +42,8 @@ pub fn is_elevated() -> bool {
 /// true when the helper was started and exited successfully; a cancelled
 /// UAC prompt shows up as a false.
 pub fn run_elevated_wait(args: &str) -> bool {
-    use windows::Win32::System::Threading::{
-        GetExitCodeProcess, WaitForSingleObject, INFINITE,
-    };
-    use windows::Win32::UI::Shell::{
-        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-    };
+    use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 
     let Ok(exe) = std::env::current_exe() else {
         return false;
