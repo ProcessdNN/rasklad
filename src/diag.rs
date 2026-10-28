@@ -44,7 +44,11 @@ fn path() -> Option<&'static PathBuf> {
 }
 
 /// Called once at startup with the value of `--debug`.
+///
+/// `RASKLAD_LOG` also turns logging on: setting it means someone wants a log
+/// for a support run, and a path with nothing in it would only be confusing.
 pub fn init(on: bool) {
+    let on = on || std::env::var_os("RASKLAD_LOG").is_some();
     ENABLED.store(on, Ordering::Relaxed);
     if on {
         log("debug log enabled");
