@@ -590,8 +590,9 @@ impl App {
                         ui.add_space(8.0);
                         ui.colored_label(
                             egui::Color32::from_rgb(240, 180, 90),
-                            "Starts without administrator rights. The scheduled task is the only \
-                             method that starts elevated, and it does so without a UAC prompt.",
+                            "At logon Windows would have to ask for administrator rights, and a \
+                             startup entry that needs a prompt is often skipped. The scheduled task \
+                             starts elevated without asking.",
                         );
                     }
 
