@@ -41,6 +41,10 @@ thread_local! {
     /// Capture-mode candidate key, finalized when it is released.
     static CAP_KEY: Cell<u32> = const { Cell::new(0) };
     static CAP_MODS: Cell<u8> = const { Cell::new(0) };
+    /// Key whose press we swallowed. Its release has to be swallowed as well,
+    /// or the system is left with a key that went down and never came up -
+    /// Caps Lock then stays latched and stops responding.
+    static SWALLOWED: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Optional debug log: set `RASKLAD_LOG=<file>` to trace hook decisions.
@@ -187,17 +191,23 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                             crate::diag::log("hotkey fired");
                             switcher::switch_layout();
                         }
+                        SWALLOWED.set(vk_code);
                         return LRESULT(1);
                     }
                     if inject_caps {
                         switcher::tap_key(vk::VK_CAPITAL);
                     }
                     if caps_owned {
+                        SWALLOWED.set(vk_code);
                         return LRESULT(1);
                     }
-                } else if vk_code == hotkey.vk {
-                    // Swallow the matching key-up too, so the app never sees
-                    // a dangling release for a key we ate.
+                } else if SWALLOWED.get() == vk_code {
+                    // Swallow the release of a press we ate, so the app never
+                    // sees a dangling one. Tied to what we actually swallowed:
+                    // testing the hotkey alone used to eat Caps releases even
+                    // while the app was switched off, which left Caps latched
+                    // and the hotkey dead until a restart.
+                    SWALLOWED.set(0);
                     return LRESULT(1);
                 }
             }
