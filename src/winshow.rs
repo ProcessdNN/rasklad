@@ -54,6 +54,36 @@ fn find_main_window() -> Option<HWND> {
     }
 }
 
+/// Make the main window fully transparent.
+///
+/// eframe paints one frame before we get a chance to hide the window, and
+/// that frame is a white rectangle. Blending it away with a zero alpha means
+/// a `--minimized` start shows nothing at all, not even a flicker.
+pub fn fade_out() -> bool {
+    let Some(hwnd) = find_main_window() else {
+        return false;
+    };
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_EXSTYLE,
+            style | WS_EX_LAYERED.0 as isize,
+        );
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), 0, LWA_ALPHA).is_ok()
+    }
+}
+
+/// Undo `fade_out`. Called before the window is shown for real.
+pub fn fade_in() {
+    let Some(hwnd) = find_main_window() else {
+        return;
+    };
+    unsafe {
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+    }
+}
+
 /// Hide the main window if it is currently on screen. Returns true when it
 /// was visible and has now been hidden.
 ///

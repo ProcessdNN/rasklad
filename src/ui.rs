@@ -233,13 +233,21 @@ impl App {
         }
 
         if start_hidden {
-            // eframe shows the window right after its first frame, and a
-            // hidden window receives no further frames, so hide it natively
-            // as soon as it appears. The gap is a few milliseconds.
+            // Two layers of defence. First make the window transparent, so
+            // the frame eframe paints before we can react is invisible.
+            if crate::winshow::fade_out() {
+                crate::diag::log("startup: window made transparent");
+            } else {
+                crate::diag::log("startup: could not make the window transparent");
+            }
+            // Then hide it natively as soon as it appears: a hidden window
+            // receives no further frames, so a viewport command alone would
+            // wait for the next repaint.
             std::thread::spawn(|| {
                 let started = std::time::Instant::now();
                 for _ in 0..300 {
                     if crate::winshow::hide_main_window_if_visible() {
+                        crate::winshow::fade_in();
                         crate::diag::log(&format!(
                             "startup: window hidden after {} ms",
                             started.elapsed().as_millis()
@@ -905,6 +913,9 @@ fn spawn_events(
     show_event: usize,
 ) {
     let show = |ctx: &egui::Context| {
+        // A --minimized start fades the window out; undo that before showing
+        // it, otherwise it would stay invisible.
+        crate::winshow::fade_in();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
