@@ -35,6 +35,52 @@ pub fn is_elevated() -> bool {
     }
 }
 
+/// Run this exe elevated with `args` and wait for it to finish.
+///
+/// Used for one-shot privileged work (registering the logon task) so the
+/// running instance keeps its window, its tray icon and its hook. Returns
+/// true when the helper was started and exited successfully; a cancelled
+/// UAC prompt shows up as a false.
+pub fn run_elevated_wait(args: &str) -> bool {
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, WaitForSingleObject, INFINITE,
+    };
+    use windows::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
+
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let verb = windows::core::HSTRING::from("runas");
+    let file = windows::core::HSTRING::from(exe.to_string_lossy().as_ref());
+    let params = windows::core::HSTRING::from(args);
+
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+
+    unsafe {
+        if ShellExecuteExW(&mut info).is_err() {
+            return false;
+        }
+        if info.hProcess.is_invalid() {
+            return false;
+        }
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let mut code = 1u32;
+        let _ = GetExitCodeProcess(info.hProcess, &mut code);
+        let _ = CloseHandle(info.hProcess);
+        code == 0
+    }
+}
+
 /// Ask the shell to start a second, elevated copy. Returns true when the
 /// launch was accepted; the caller should then exit so the single-instance
 /// guard hands control to the new process.

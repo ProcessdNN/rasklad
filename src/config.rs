@@ -17,6 +17,34 @@ pub enum AutostartMethod {
 }
 
 impl AutostartMethod {
+    /// Only a scheduled task can start the app with full rights and without
+    /// a UAC prompt at logon: the Task Scheduler service launches the
+    /// process with the user's elevated token. Registry and Startup-folder
+    /// entries always run with the normal token.
+    pub fn requires_admin(self) -> bool {
+        matches!(self, Self::ScheduledTask)
+    }
+
+    /// Stable identifier, used on the helper's command line.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::RegistryRun => "registry",
+            Self::StartupFolder => "startup",
+            Self::ScheduledTask => "task",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "none" => Some(Self::None),
+            "registry" => Some(Self::RegistryRun),
+            "startup" => Some(Self::StartupFolder),
+            "task" => Some(Self::ScheduledTask),
+            _ => None,
+        }
+    }
+
     pub const ALL: [Self; 3] = [
         Self::RegistryRun,
         Self::StartupFolder,
@@ -160,6 +188,9 @@ pub struct Config {
     /// Which modifier+Caps combo toggles Caps Lock mode.
     #[serde(default)]
     pub caps_combo: CapsCombo,
+    /// Start into the tray when launched by autostart.
+    #[serde(default = "default_true")]
+    pub start_minimized: bool,
 }
 
 fn default_true() -> bool {
@@ -173,6 +204,7 @@ impl Default for Config {
             hotkey: Hotkey::default(),
             autostart: AutostartMethod::None,
             caps_combo: CapsCombo::Shift,
+            start_minimized: true,
         }
     }
 }
@@ -184,6 +216,9 @@ mod imp {
     use std::path::PathBuf;
 
     use super::{AutostartMethod, AutostartState, Config};
+
+    /// Name of the logon task in Task Scheduler.
+    const TASK_NAME: &str = "Rasklad";
 
     pub fn config_path() -> PathBuf {
         let base = std::env::var_os("APPDATA")
@@ -256,7 +291,7 @@ mod imp {
         let out = match schtasks(&[
             "/Query".into(),
             "/TN".into(),
-            "Rasklad".into(),
+            TASK_NAME.into(),
             "/XML".into(),
         ]) {
             Ok(out) if out.status.success() => out,
@@ -348,15 +383,35 @@ mod imp {
     /// Disable every autostart mechanism, then enable the requested one.
     /// Errors from disabling are ignored (the entry may simply not exist);
     /// a failure to enable the requested method is reported.
-    pub fn apply_autostart(method: AutostartMethod) -> io::Result<()> {
-        let _ = registry(false);
-        let _ = startup_folder(false);
-        let _ = scheduled_task(false);
+    /// Command line used by every autostart mechanism.
+    fn launch_command(exe: &std::path::Path, start_minimized: bool) -> String {
+        if start_minimized {
+            format!("\"{}\" --minimized", exe.display())
+        } else {
+            format!("\"{}\"", exe.display())
+        }
+    }
+
+    /// The same thing as a bare argument list for a shortcut.
+    fn launch_arguments(start_minimized: bool) -> &'static str {
+        if start_minimized {
+            "--minimized"
+        } else {
+            ""
+        }
+    }
+
+    pub fn apply_autostart(method: AutostartMethod, start_minimized: bool) -> io::Result<()> {
+        let _ = registry(false, start_minimized);
+        let _ = startup_folder(false, start_minimized);
+        let _ = scheduled_task(false, start_minimized);
         match method {
             AutostartMethod::None => Ok(()),
-            AutostartMethod::RegistryRun => registry(true).and(verify_registry()),
+            AutostartMethod::RegistryRun => {
+                registry(true, start_minimized).and(verify_registry())
+            }
             AutostartMethod::StartupFolder => {
-                startup_folder(true).and_then(|_| match startup_lnk_path() {
+                startup_folder(true, start_minimized).and_then(|_| match startup_lnk_path() {
                     Ok(p) if p.exists() => Ok(()),
                     _ => Err(io::Error::new(
                         io::ErrorKind::Other,
@@ -364,7 +419,9 @@ mod imp {
                     )),
                 })
             }
-            AutostartMethod::ScheduledTask => scheduled_task(true).and(verify_task()),
+            AutostartMethod::ScheduledTask => {
+                scheduled_task(true, start_minimized).and(verify_task())
+            }
         }
     }
 
@@ -405,7 +462,7 @@ mod imp {
         let out = schtasks(&[
             "/Query".into(),
             "/TN".into(),
-            "Rasklad".into(),
+            TASK_NAME.into(),
         ])?;
         if out.status.success() {
             Ok(())
@@ -418,7 +475,7 @@ mod imp {
     }
 
     /// HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-    fn registry(enable: bool) -> io::Result<()> {
+    fn registry(enable: bool, start_minimized: bool) -> io::Result<()> {
         use winreg::enums::HKEY_CURRENT_USER;
         use winreg::RegKey;
 
@@ -427,8 +484,7 @@ mod imp {
             hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")?;
         if enable {
             let exe = std::env::current_exe()?;
-            let value = format!("\"{}\" --minimized", exe.display());
-            key.set_value("rasklad", &value)?;
+            key.set_value("rasklad", &launch_command(&exe, start_minimized))?;
         } else {
             let _ = key.delete_value("rasklad");
         }
@@ -445,10 +501,10 @@ mod imp {
     }
 
     /// shell:startup shortcut to the exe.
-    fn startup_folder(enable: bool) -> io::Result<()> {
+    fn startup_folder(enable: bool, start_minimized: bool) -> io::Result<()> {
         let lnk = startup_lnk_path()?;
         if enable {
-            create_shortcut(&lnk)
+            create_shortcut(&lnk, start_minimized)
         } else {
             match fs::remove_file(&lnk) {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -457,7 +513,7 @@ mod imp {
         }
     }
 
-    fn create_shortcut(lnk: &std::path::Path) -> io::Result<()> {
+    fn create_shortcut(lnk: &std::path::Path, start_minimized: bool) -> io::Result<()> {
         use windows::core::{Interface, HSTRING};
         use windows::Win32::System::Com::{
             CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER,
@@ -476,7 +532,7 @@ mod imp {
             let exe = std::env::current_exe()?;
             let exe_s = HSTRING::from(exe.to_string_lossy().as_ref());
             link.SetPath(&exe_s).map_err(into)?;
-            link.SetArguments(&HSTRING::from("--minimized"))
+            link.SetArguments(&HSTRING::from(launch_arguments(start_minimized)))
                 .map_err(into)?;
             let dir = exe
                 .parent()
@@ -490,31 +546,61 @@ mod imp {
         Ok(())
     }
 
-    /// A logon task via schtasks.exe (no COM / admin needed).
-    fn scheduled_task(enable: bool) -> io::Result<()> {
+    /// Arguments that register the logon task.
+    ///
+    /// `/RL HIGHEST` is the whole point: the Task Scheduler service starts
+    /// the process with the elevated token, so the app comes up with full
+    /// rights and without a UAC prompt at logon. Registry and Startup-folder
+    /// entries cannot do that.
+    fn task_args(exe: &std::path::Path, start_minimized: bool) -> Vec<String> {
+        vec![
+            "/Create".into(),
+            "/TN".into(),
+            TASK_NAME.into(),
+            "/SC".into(),
+            "ONLOGON".into(),
+            "/RL".into(),
+            "HIGHEST".into(),
+            "/F".into(),
+            "/TR".into(),
+            launch_command(exe, start_minimized),
+        ]
+    }
+
+    /// A logon task via schtasks.exe.
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const EXE: &str = "C:/apps/rasklad.exe";
+
+        #[test]
+        fn task_runs_with_highest_privileges() {
+            let joined = task_args(std::path::Path::new(EXE), true).join(" ");
+            assert!(joined.contains("/RL HIGHEST"), "{joined}");
+            assert!(joined.contains("/SC ONLOGON"), "{joined}");
+            assert!(joined.contains(&format!("\"{EXE}\" --minimized")), "{joined}");
+        }
+
+        #[test]
+        fn start_minimized_controls_the_argument() {
+            let joined = task_args(std::path::Path::new(EXE), false).join(" ");
+            assert!(!joined.contains("--minimized"), "{joined}");
+            assert_eq!(launch_arguments(false), "");
+            assert_eq!(launch_arguments(true), "--minimized");
+        }
+    }
+
+    fn scheduled_task(enable: bool, start_minimized: bool) -> io::Result<()> {
         let (args, op): (Vec<String>, &str) = if enable {
             let exe = std::env::current_exe()?;
-            (
-                vec![
-                    "/Create".into(),
-                    "/TN".into(),
-                    "Rasklad".into(),
-                    "/SC".into(),
-                    "ONLOGON".into(),
-                    "/RL".into(),
-                    "LIMITED".into(),
-                    "/F".into(),
-                    "/TR".into(),
-                    format!("\"{}\" --minimized", exe.display()),
-                ],
-                "create",
-            )
+            (task_args(&exe, start_minimized), "create")
         } else {
             (
                 vec![
                     "/Delete".into(),
                     "/TN".into(),
-                    "Rasklad".into(),
+                    TASK_NAME.into(),
                     "/F".into(),
                 ],
                 "delete",
@@ -549,6 +635,7 @@ mod tests {
         assert!(cfg.enabled);
         assert_eq!(cfg.hotkey, Hotkey::default());
         assert_eq!(cfg.autostart, AutostartMethod::None);
+        assert!(cfg.start_minimized);
     }
 
     #[test]

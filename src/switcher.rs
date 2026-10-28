@@ -51,7 +51,7 @@ fn switch_via_message() -> bool {
         let Some(next) = next_layout(GetKeyboardLayout(tid)) else {
             return false;
         };
-        crate::hook::debug_log(&format!(
+        crate::diag::log(&format!(
             "switch: fg={:?} next={:?}",
             fg.0, next.0
         ));
@@ -73,11 +73,11 @@ fn switch_via_message() -> bool {
         for _ in 0..20 {
             std::thread::sleep(Duration::from_millis(10));
             if GetKeyboardLayout(tid) == next {
-                crate::hook::debug_log("switch: ok via message");
+                crate::diag::log("switch: ok via message");
                 return true;
             }
         }
-        crate::hook::debug_log("switch: message ignored, falling back to Win+Space");
+        crate::diag::log("switch: message ignored, falling back to Win+Space");
         false
     }
 }

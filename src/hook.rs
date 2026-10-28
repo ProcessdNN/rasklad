@@ -45,21 +45,6 @@ thread_local! {
 
 /// Optional debug log: set `RASKLAD_LOG=<file>` to trace hook decisions.
 /// Costs nothing when the variable is unset.
-pub fn debug_log(msg: &str) {
-    static PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
-    let path = PATH.get_or_init(|| std::env::var_os("RASKLAD_LOG").map(std::path::PathBuf::from));
-    if let Some(path) = path {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
-            let _ = writeln!(f, "{msg}");
-        }
-    }
-}
-
 fn mod_bit(vk_code: u32) -> u8 {
     match vk_code {
         0x10 | 0xA0 | 0xA1 => M_SHIFT, // Shift / LShift / RShift
@@ -198,14 +183,10 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                         && caps_owned
                         && caps_combo != CapsCombo::Off
                         && caps_combo.matches(&mods_for(vk_code));
-                    debug_log(&format!(
-                        "key vk={vk_code:#04x} mods={:#06b} fire={is_hotkey} inject={inject_caps} caps_owned={caps_owned} fg={:?}",
-                        held_mods(),
-                        GetForegroundWindow().0
-                    ));
                     if is_hotkey {
                         // Auto-repeat: the key is already down, don't fire again.
                         if !is_down(vk_code) {
+                            crate::diag::log("hotkey fired");
                             switcher::switch_layout();
                         }
                         return LRESULT(1);
@@ -235,8 +216,8 @@ pub fn install(shared: Arc<Shared>) -> windows::core::Result<HHOOK> {
         let hmod = GetModuleHandleW(PCWSTR::null())?;
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(HINSTANCE(hmod.0)), 0);
         match &hook {
-            Ok(h) => debug_log(&format!("hook installed {:?}", h.0)),
-            Err(e) => debug_log(&format!("hook install FAILED: {e:?}")),
+            Ok(h) => crate::diag::log(&format!("hook installed {:?}", h.0)),
+            Err(e) => crate::diag::log(&format!("hook install FAILED: {e:?}")),
         }
         hook
     }

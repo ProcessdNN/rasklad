@@ -178,6 +178,8 @@ pub struct App {
     was_focused: bool,
     /// Keys currently held, tracked by the in-window capture poll.
     rec_down: std::collections::HashSet<u32>,
+    /// The diagnostics report has been copied at least once.
+    diag_copied: bool,
 }
 
 impl App {
@@ -200,7 +202,7 @@ impl App {
                     return;
                 }
                 let state = config::autostart_state(method);
-                crate::hook::debug_log(&format!("autostart check: {state:?}"));
+                crate::diag::log(&format!("autostart check: {state:?}"));
                 if !state.is_broken() {
                     // A stale-but-valid path is reported in the Autostart
                     // window, not rewritten behind the user's back.
@@ -211,8 +213,13 @@ impl App {
                     }
                     return;
                 }
-                let repaired = config::apply_autostart(method).is_ok();
-                crate::hook::debug_log(&format!("autostart repair: ok={repaired}"));
+                let start_minimized = shared.config.lock().unwrap().start_minimized;
+                // Recreating the logon task needs administrator rights; a
+                // background repair cannot ask for them.
+                let allowed = !method.requires_admin() || elevation::is_elevated();
+                let repaired =
+                    allowed && config::apply_autostart(method, start_minimized).is_ok();
+                crate::diag::log(&format!("autostart repair: ok={repaired}"));
                 if let Some(note) = state.message() {
                     let note = if repaired {
                         note
@@ -246,6 +253,7 @@ impl App {
             menu_opened_at: 0.0,
             was_focused: false,
             rec_down: std::collections::HashSet::new(),
+            diag_copied: false,
         }
     }
 
@@ -264,16 +272,67 @@ impl App {
         *self.shared.config.lock().unwrap() = next;
     }
 
-    fn set_autostart(&mut self, method: AutostartMethod) {
-        match config::apply_autostart(method) {
+    fn set_autostart(&mut self, ctx: &egui::Context, method: AutostartMethod) {
+        // Write first: the elevated helper applies whatever the config says.
+        let start_minimized = {
+            let mut cfg = self.shared.config.lock().unwrap();
+            cfg.autostart = method;
+            let _ = config::save(&cfg);
+            cfg.start_minimized
+        };
+        self.autostart_status = None;
+        self.apply_autostart(ctx, method, start_minimized);
+    }
+
+    fn set_start_minimized(&mut self, ctx: &egui::Context, on: bool) {
+        let (method, start_minimized) = {
+            let mut cfg = self.shared.config.lock().unwrap();
+            cfg.start_minimized = on;
+            let _ = config::save(&cfg);
+            (cfg.autostart, cfg.start_minimized)
+        };
+        // Re-apply so the entry picks up the new argument list.
+        if method != AutostartMethod::None {
+            self.apply_autostart(ctx, method, start_minimized);
+        }
+    }
+
+    /// Apply the autostart entry. The logon task needs administrator rights,
+    /// so it is created by a short-lived elevated helper. The running
+    /// instance is not restarted: it keeps its window, tray icon and hook.
+    fn apply_autostart(
+        &mut self,
+        ctx: &egui::Context,
+        method: AutostartMethod,
+        start_minimized: bool,
+    ) {
+        if method.requires_admin() && !elevation::is_elevated() {
+            let args = format!("--apply-autostart {}", method.key());
+            let shared = self.shared.clone();
+            let ctx = ctx.clone();
+            self.autostart_status = Some("Waiting for the UAC prompt…".to_string());
+            std::thread::spawn(move || {
+                let ok = elevation::run_elevated_wait(&args);
+                crate::diag::log(&format!("autostart helper finished: ok={ok}"));
+                *shared.autostart_note.lock().unwrap() = Some(if ok {
+                    "Autostart updated.".to_string()
+                } else {
+                    "Autostart was not updated: administrator rights were not granted.".to_string()
+                });
+                ctx.request_repaint();
+            });
+            return;
+        }
+        match config::apply_autostart(method, start_minimized) {
             Ok(()) => {
-                let mut cfg = self.shared.config.lock().unwrap();
-                cfg.autostart = method;
-                let _ = config::save(&cfg);
+                crate::diag::log(&format!("autostart applied: {}", method.key()));
                 self.autostart_status = None;
                 self.autostart_note = None;
             }
-            Err(e) => self.autostart_status = Some(e.to_string()),
+            Err(e) => {
+                crate::diag::log(&format!("autostart failed: {e}"));
+                self.autostart_status = Some(e.to_string());
+            }
         }
     }
 
@@ -363,7 +422,7 @@ impl App {
     }
 
     fn advanced_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
-        let size = egui::vec2(300.0, 100.0);
+        let size = egui::vec2(300.0, 168.0);
         let builder = self
             .child_builder(ctx, "Advanced settings", [size.x, size.y])
             .with_visible(self.advanced_win.shown);
@@ -394,6 +453,27 @@ impl App {
                                 }
                             });
                     });
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    let mut logging = crate::diag::is_enabled();
+                    if ui
+                        .checkbox(&mut logging, "Debug log (this session only)")
+                        .changed()
+                    {
+                        crate::diag::enable(logging);
+                    }
+                    ui.add_space(4.0);
+                    if ui.button("Copy diagnostics").clicked() {
+                        ctx.copy_text(crate::diag::report(cfg));
+                        self.diag_copied = true;
+                    }
+                    if self.diag_copied {
+                        ui.add_space(2.0);
+                        ui.label("Copied to clipboard.");
+                    }
                 });
             },
         );
@@ -401,7 +481,7 @@ impl App {
 
     fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
         // Pop next to the main window instead of wherever the WM puts it.
-        let size = egui::vec2(300.0, 110.0);
+        let size = egui::vec2(320.0, 196.0);
         let builder = self
             .child_builder(ctx, "Autostart", [size.x, size.y])
             .with_visible(self.autostart_win.shown);
@@ -430,7 +510,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label("Autostart");
                         if toggle_ui(ui, &mut on).changed() {
-                            self.set_autostart(if on { sel } else { AutostartMethod::None });
+                            self.set_autostart(ctx, if on { sel } else { AutostartMethod::None });
                         }
                     });
 
@@ -443,15 +523,41 @@ impl App {
                             .selected_text(sel.title())
                             .show_ui(ui, |ui| {
                                 for m in AutostartMethod::ALL {
-                                    if ui.selectable_label(sel == m, m.title()).clicked() {
+                                    let label = if m.requires_admin() {
+                                        format!("{} (recommended)", m.title())
+                                    } else {
+                                        m.title().to_string()
+                                    };
+                                    if ui.selectable_label(sel == m, label).clicked() {
                                         self.autostart_sel = m;
                                         if on {
-                                            self.set_autostart(m);
+                                            self.set_autostart(ctx, m);
                                         }
                                     }
                                 }
                             });
                     });
+
+                    ui.add_space(8.0);
+                    let mut minimized = cfg.start_minimized;
+                    if ui
+                        .checkbox(&mut minimized, "Start minimized in the tray")
+                        .changed()
+                    {
+                        self.set_start_minimized(ctx, minimized);
+                    }
+
+                    // Registry and Startup-folder entries run with the normal
+                    // user token: only the logon task can start elevated, and
+                    // only it does so without a UAC prompt.
+                    if sel != AutostartMethod::None && !sel.requires_admin() {
+                        ui.add_space(8.0);
+                        ui.colored_label(
+                            egui::Color32::from_rgb(240, 180, 90),
+                            "Starts without administrator rights. The scheduled task is the only \
+                             method that starts elevated, and it does so without a UAC prompt.",
+                        );
+                    }
 
                     if let Some(note) = &self.autostart_note {
                         ui.add_space(6.0);
@@ -637,7 +743,7 @@ impl eframe::App for App {
         let focused = ctx.input(|i| i.viewport().focused) == Some(true);
         if focused != self.was_focused {
             self.was_focused = focused;
-            crate::hook::debug_log(&format!("window focused={focused}"));
+            crate::diag::log(&format!("window focused={focused}"));
         }
 
         let cfg = self.config();
