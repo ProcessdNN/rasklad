@@ -310,9 +310,11 @@ impl App {
             let args = format!("--apply-autostart {}", method.key());
             let shared = self.shared.clone();
             let ctx = ctx.clone();
-            self.autostart_status = Some("Waiting for the UAC prompt…".to_string());
+            self.autostart_status = None;
+            shared.autostart_pending.store(true, Ordering::SeqCst);
             std::thread::spawn(move || {
                 let ok = elevation::run_elevated_wait(&args);
+                shared.autostart_pending.store(false, Ordering::SeqCst);
                 crate::diag::log(&format!("autostart helper finished: ok={ok}"));
                 *shared.autostart_note.lock().unwrap() = Some(if ok {
                     "Autostart updated.".to_string()
@@ -496,6 +498,11 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                     self.autostart_open = false;
                     self.autostart_win.reset();
+                    // The note is a one-off answer to the last action; keep
+                    // it for this visit only.
+                    self.autostart_note = None;
+                    self.autostart_status = None;
+                    *self.shared.autostart_note.lock().unwrap() = None;
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.add_space(2.0);
@@ -559,6 +566,13 @@ impl App {
                         );
                     }
 
+                    if self.shared.autostart_pending.load(Ordering::SeqCst) {
+                        ui.add_space(6.0);
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 150, 150),
+                            "Waiting for the UAC prompt…",
+                        );
+                    }
                     if let Some(note) = &self.autostart_note {
                         ui.add_space(6.0);
                         ui.colored_label(egui::Color32::from_rgb(240, 180, 90), note.as_str());

@@ -26,6 +26,9 @@ pub struct Shared {
     /// One-off note about the autostart entry (stale path repaired at
     /// startup, or a repair that failed).
     pub autostart_note: Mutex<Option<String>>,
+    /// An elevated helper is running: the Autostart window shows a waiting
+    /// hint until the helper exits.
+    pub autostart_pending: AtomicBool,
 }
 
 impl Shared {
@@ -36,6 +39,7 @@ impl Shared {
             capture: Mutex::new(None),
             worker_tid: AtomicU32::new(0),
             autostart_note: Mutex::new(None),
+            autostart_pending: AtomicBool::new(false),
         }
     }
 }
