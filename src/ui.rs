@@ -102,22 +102,57 @@ impl ChildWindow {
     }
 
     /// True when the caller should paint (and the window is ready to show).
-    fn ready(&mut self, ctx: &egui::Context, size: egui::Vec2) -> bool {
+    ///
+    /// The window is painted hidden for a couple of frames first: the first
+    /// frame measures the content, the next one applies the height, and only
+    /// then is the window shown - otherwise it would appear at the guess size
+    /// and jump.
+    fn ready(&mut self, ctx: &egui::Context) -> bool {
         if self.shown {
             return true;
         }
         self.polls += 1;
-        let sized = ctx
-            .input(|i| i.viewport().inner_rect)
-            .map_or(false, |r| (r.size() - size).length() < 2.0);
-        // `polls` is a safety net in case the size is never reported.
-        if sized || self.polls > 8 {
+        let mapped = ctx.input(|i| i.viewport().inner_rect).is_some();
+        if mapped && self.polls >= 3 {
             self.shown = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             return true;
         }
         ctx.request_repaint();
         false
+    }
+}
+
+/// Space kept under the last widget of a child window.
+const WINDOW_BOTTOM_PADDING: f32 = 12.0;
+
+/// Tallest a child window is allowed to grow, a guard against a layout that
+/// reports a bigger size every frame.
+const WINDOW_MAX_HEIGHT: f32 = 900.0;
+
+/// Resize a child window to its content, keeping the width fixed.
+///
+/// The height comes from the layout cursor, not from `Ui::min_rect`:
+/// `CentralPanel` paints a background over the whole window and expands the
+/// minimum rect to match, so measuring that would feed the window size back
+/// into itself and make it grow a few pixels every frame.
+fn fit_height(ctx: &egui::Context, ui: &egui::Ui, width: f32) {
+    let Some(inner) = ctx.input(|i| i.viewport().inner_rect) else {
+        return;
+    };
+    // `Ui` rects of a child viewport start at the window origin, so the top
+    // of the available rect is the panel margin itself.
+    let margin = ui.max_rect().top().max(0.0);
+    let content = (ui.cursor().top() - margin).max(0.0);
+    let target = (content + 2.0 * margin + WINDOW_BOTTOM_PADDING).min(WINDOW_MAX_HEIGHT);
+    if (inner.height() - target).abs() > 1.0 {
+        crate::diag::log(&format!(
+            "window fit: {:.0} -> {target:.0} px",
+            inner.height()
+        ));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+            width, target,
+        )));
     }
 }
 
@@ -459,15 +494,15 @@ impl App {
     }
 
     fn advanced_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
-        let size = egui::vec2(300.0, 168.0);
+        let width = 300.0;
         let builder = self
-            .child_builder(ctx, "Advanced settings", [size.x, size.y])
+            .child_builder(ctx, "Advanced settings", [width, 120.0])
             .with_visible(self.advanced_win.shown);
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("advanced-window"),
             builder,
             |ctx, _class| {
-                if !self.advanced_win.ready(ctx, size) {
+                if !self.advanced_win.ready(ctx) {
                     return;
                 }
                 if ctx.input(|i| i.viewport().close_requested()) {
@@ -511,6 +546,7 @@ impl App {
                         ui.add_space(2.0);
                         ui.label("Copied to clipboard.");
                     }
+                    fit_height(ctx, ui, width);
                 });
             },
         );
@@ -518,15 +554,15 @@ impl App {
 
     fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
         // Pop next to the main window instead of wherever the WM puts it.
-        let size = egui::vec2(320.0, 216.0);
+        let width = 320.0;
         let builder = self
-            .child_builder(ctx, "Autostart", [size.x, size.y])
+            .child_builder(ctx, "Autostart", [width, 160.0])
             .with_visible(self.autostart_win.shown);
         ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("autostart-window"),
             builder,
             |ctx, _class| {
-                if !self.autostart_win.ready(ctx, size) {
+                if !self.autostart_win.ready(ctx) {
                     return;
                 }
                 if ctx.input(|i| i.viewport().close_requested()) {
@@ -617,6 +653,7 @@ impl App {
                         ui.add_space(6.0);
                         ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
                     }
+                    fit_height(ctx, ui, width);
                 });
             },
         );

@@ -54,10 +54,6 @@ Nothing else is needed: no installer, no runtime, no redistributable.
 
 Windows 10 and 11, 64-bit.
 
-Windows asks for administrator rights when the exe starts. The hook needs them
-to switch layouts in elevated windows, and there is no second mode without
-them.
-
 The first launch opens the settings window. Turn on autostart there if you want
 the app back after a reboot.
 
@@ -95,9 +91,8 @@ Requires stable Rust with the `x86_64-pc-windows-msvc` toolchain
 - A `WH_KEYBOARD_LL` hook on a dedicated thread watches key presses and eats
   the trigger.
 - The layout is switched with `WM_INPUTLANGCHANGEREQUEST` sent to the
-  foreground window. Because rasklad runs elevated itself, that message is
-  accepted by elevated windows too; `Win+Space` is only injected when the
-  message is refused.
+  foreground window. When that window runs elevated the message is blocked, and
+  `Win+Space` is injected instead.
 - Modifier state is read from `GetAsyncKeyState` on every event. Nothing is
   accumulated, so a missed key release cannot leave the hotkey stuck.
 - Autostart entries are read back at startup, which is how a stale registry
@@ -108,6 +103,9 @@ Requires stable Rust with the `x86_64-pc-windows-msvc` toolchain
 - The hotkey does not fire while the rasklad window itself is focused. Windows
   does not deliver those keystrokes to the hook. Recording a hotkey is not
   affected, because it reads the key state directly.
+- Switching the layout of an elevated foreground window needs rasklad to run as
+  administrator. The settings window detects this and offers a restart with
+  elevation.
 
 ## Contributing
 
