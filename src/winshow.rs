@@ -54,6 +54,25 @@ fn find_main_window() -> Option<HWND> {
     }
 }
 
+/// Hide the main window if it is currently on screen. Returns true when it
+/// was visible and has now been hidden.
+///
+/// Used for a `--minimized` start: eframe shows the window after its first
+/// frame no matter what the viewport builder says, and a hidden window gets
+/// no further frames, so the viewport command alone cannot undo it.
+pub fn hide_main_window_if_visible() -> bool {
+    let Some(hwnd) = find_main_window() else {
+        return false;
+    };
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() {
+            return false;
+        }
+        let _ = ShowWindow(hwnd, SW_HIDE);
+        true
+    }
+}
+
 /// Restore + show the main window and force it into the foreground.
 pub fn raise_main_window() {
     let Some(hwnd) = find_main_window() else { return };

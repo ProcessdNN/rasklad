@@ -180,8 +180,6 @@ pub struct App {
     rec_down: std::collections::HashSet<u32>,
     /// The diagnostics report has been copied at least once.
     diag_copied: bool,
-    /// Frames left to re-assert "stay hidden" after a `--minimized` start.
-    hide_frames: u8,
 }
 
 impl App {
@@ -234,6 +232,26 @@ impl App {
             });
         }
 
+        if start_hidden {
+            // eframe shows the window right after its first frame, and a
+            // hidden window receives no further frames, so hide it natively
+            // as soon as it appears. The gap is a few milliseconds.
+            std::thread::spawn(|| {
+                let started = std::time::Instant::now();
+                for _ in 0..300 {
+                    if crate::winshow::hide_main_window_if_visible() {
+                        crate::diag::log(&format!(
+                            "startup: window hidden after {} ms",
+                            started.elapsed().as_millis()
+                        ));
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                crate::diag::log("startup: window never appeared");
+            });
+        }
+
         Self {
             shared,
             cmds,
@@ -257,7 +275,6 @@ impl App {
             was_focused: false,
             rec_down: std::collections::HashSet::new(),
             diag_copied: false,
-            hide_frames: if start_hidden { 5 } else { 0 },
         }
     }
 
@@ -740,15 +757,6 @@ impl eframe::App for App {
         }
 
         // Window close button hides to tray instead of exiting.
-        // eframe shows the window unconditionally after the first frame (its
-        // fix for the white flash on startup), so `with_visible(false)` alone
-        // cannot keep a --minimized start in the tray. Re-assert it for a few
-        // frames, then let the tray icon own the window again.
-        if self.hide_frames > 0 {
-            self.hide_frames -= 1;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        }
-
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
