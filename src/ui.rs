@@ -113,7 +113,9 @@ impl ChildWindow {
         }
         self.polls += 1;
         let mapped = ctx.input(|i| i.viewport().inner_rect).is_some();
-        if mapped && self.polls >= 3 {
+        // The cap matters: without it a viewport that never reports its rect
+        // would keep this loop asking for repaints and spin a core forever.
+        if (mapped && self.polls >= 3) || self.polls >= 30 {
             self.shown = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             return true;
@@ -215,6 +217,8 @@ pub struct App {
     rec_down: std::collections::HashSet<u32>,
     /// The diagnostics report has been copied at least once.
     diag_copied: bool,
+    /// Filled by the thread that builds the diagnostics report.
+    report_slot: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl App {
@@ -324,6 +328,7 @@ impl App {
             was_focused: false,
             rec_down: std::collections::HashSet::new(),
             diag_copied: false,
+            report_slot: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -376,36 +381,41 @@ impl App {
         method: AutostartMethod,
         start_minimized: bool,
     ) {
-        if method.requires_admin() && !elevation::is_elevated() {
-            let args = format!("--apply-autostart {}", method.key());
-            let shared = self.shared.clone();
-            let ctx = ctx.clone();
-            self.autostart_status = None;
-            shared.autostart_pending.store(true, Ordering::SeqCst);
-            std::thread::spawn(move || {
+        let shared = self.shared.clone();
+        let ctx = ctx.clone();
+        self.autostart_status = None;
+        shared.autostart_pending.store(true, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            // Every method shells out to schtasks or writes the registry, so
+            // none of it belongs on the thread that draws the window.
+            let outcome = if method.requires_admin() && !elevation::is_elevated() {
+                let args = format!("--apply-autostart {}", method.key());
                 let ok = elevation::run_elevated_wait(&args);
-                shared.autostart_pending.store(false, Ordering::SeqCst);
                 crate::diag::log(&format!("autostart helper finished: ok={ok}"));
-                *shared.autostart_note.lock().unwrap() = Some(if ok {
-                    "Autostart updated.".to_string()
+                if ok {
+                    Ok(())
                 } else {
-                    "Autostart was not updated: administrator rights were not granted.".to_string()
-                });
-                ctx.request_repaint();
+                    Err("administrator rights were not granted".to_string())
+                }
+            } else {
+                match config::apply_autostart(method, start_minimized) {
+                    Ok(()) => {
+                        crate::diag::log(&format!("autostart applied: {}", method.key()));
+                        Ok(())
+                    }
+                    Err(e) => {
+                        crate::diag::log(&format!("autostart failed: {e}"));
+                        Err(e.to_string())
+                    }
+                }
+            };
+            shared.autostart_pending.store(false, Ordering::SeqCst);
+            *shared.autostart_note.lock().unwrap() = Some(match outcome {
+                Ok(()) => "Autostart updated.".to_string(),
+                Err(e) => format!("Autostart was not updated: {e}"),
             });
-            return;
-        }
-        match config::apply_autostart(method, start_minimized) {
-            Ok(()) => {
-                crate::diag::log(&format!("autostart applied: {}", method.key()));
-                self.autostart_status = None;
-                self.autostart_note = None;
-            }
-            Err(e) => {
-                crate::diag::log(&format!("autostart failed: {e}"));
-                self.autostart_status = Some(e.to_string());
-            }
-        }
+            ctx.request_repaint();
+        });
     }
 
     fn set_caps_combo(&self, combo: CapsCombo) {
@@ -539,8 +549,18 @@ impl App {
                     }
                     ui.add_space(4.0);
                     if ui.button("Copy diagnostics").clicked() {
-                        ctx.copy_text(crate::diag::report(cfg));
-                        self.diag_copied = true;
+                        // Building the report asks the Task Scheduler about the
+                        // autostart entry, which takes a few hundred
+                        // milliseconds. Do it off the UI thread and copy the
+                        // text once it is ready.
+                        let slot = self.report_slot.clone();
+                        let cfg = cfg.clone();
+                        let ctx = ctx.clone();
+                        std::thread::spawn(move || {
+                            let text = crate::diag::report(&cfg);
+                            *slot.lock().unwrap() = Some(text);
+                            ctx.request_repaint();
+                        });
                     }
                     if self.diag_copied {
                         ui.add_space(2.0);
@@ -639,9 +659,14 @@ impl App {
 
                     if self.shared.autostart_pending.load(Ordering::SeqCst) {
                         ui.add_space(6.0);
+                        let needs_uac = sel.requires_admin() && !elevation::is_elevated();
                         ui.colored_label(
                             egui::Color32::from_rgb(150, 150, 150),
-                            "Waiting for the UAC prompt…",
+                            if needs_uac {
+                                "Waiting for the UAC prompt…"
+                            } else {
+                                "Applying…"
+                            },
                         );
                     }
                     if let Some(note) = &self.autostart_note {
@@ -808,6 +833,13 @@ impl eframe::App for App {
         }
 
         // Window close button hides to tray instead of exiting.
+        // The diagnostics report is built on a worker thread; copy it here,
+        // where the egui output is actually collected.
+        if let Some(text) = self.report_slot.lock().unwrap().take() {
+            ctx.copy_text(text);
+            self.diag_copied = true;
+        }
+
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
