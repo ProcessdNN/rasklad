@@ -23,24 +23,53 @@ mod winshow;
 #[cfg(windows)]
 mod worker;
 
+/// Command line switches. Parsed in one place so the flag handling can be
+/// tested without starting the app.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Launch {
+    /// `--minimized`: stay in the tray, used by the autostart entry.
+    minimized: bool,
+    /// `--debug`: write the diagnostic log for this run.
+    debug: bool,
+    /// `--elevated`: started by the "relaunch as admin" link, wait for the
+    /// previous instance to release the mutex.
+    wait_primary: bool,
+    /// `--apply-autostart <key>`: one-shot privileged helper.
+    apply_autostart: Option<String>,
+}
+
+fn parse_launch<I, S>(args: I) -> Launch
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args: Vec<String> = args.into_iter().map(|a| a.as_ref().to_string()).collect();
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    let apply_autostart = args
+        .iter()
+        .position(|a| a == "--apply-autostart")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    Launch {
+        minimized: has("--minimized"),
+        debug: has("--debug"),
+        wait_primary: has("--elevated"),
+        apply_autostart,
+    }
+}
+
 #[cfg(windows)]
 fn main() {
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::channel;
     use std::sync::Arc;
 
-    let args: Vec<String> = std::env::args().collect();
-    let has = |flag: &str| args.iter().any(|a| a == flag);
-
+    let launch = parse_launch(std::env::args());
     // Autostart registers us with --minimized: stay in the tray.
     // A manual launch opens the settings window instead.
-    let minimized = has("--minimized");
-    // Started by the "relaunch as admin" link: the previous process is on
-    // its way out — wait for it to release the single-instance mutex.
-    let wait_primary = has("--elevated");
-    // Diagnostic log for this run only; the Advanced window toggles the same
-    // thing at runtime.
-    let debug = has("--debug");
+    let minimized = launch.minimized;
+    let wait_primary = launch.wait_primary;
+    let debug = launch.debug;
 
     diag::install_panic_hook();
     diag::init(debug);
@@ -48,8 +77,8 @@ fn main() {
     // One-shot privileged helper, started by the Autostart window when the
     // selected method needs administrator rights. It applies the entry from
     // the saved config and exits; the running instance is left alone.
-    if let Some(pos) = args.iter().position(|a| a == "--apply-autostart") {
-        let method = args.get(pos + 1).and_then(|k| config::AutostartMethod::from_key(k));
+    if let Some(key) = launch.apply_autostart.as_deref() {
+        let method = config::AutostartMethod::from_key(key);
         let ok = match method {
             Some(m) => config::apply_autostart(m, config::load().start_minimized).is_ok(),
             None => false,
@@ -69,9 +98,10 @@ fn main() {
 
     let shared = Arc::new(shared::Shared::new(config::load()));
     diag::log(&format!(
-        "start: {} elevated={}",
+        "start: {} elevated={} minimized={}",
         env!("CARGO_PKG_VERSION"),
-        elevation::is_elevated()
+        elevation::is_elevated(),
+        minimized
     ));
 
     let (cmd_tx, cmd_rx) = channel();
@@ -105,4 +135,33 @@ fn main() {
 #[cfg(not(windows))]
 fn main() {
     eprintln!("rasklad is a Windows-only application.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_launch;
+
+    #[test]
+    fn parses_the_autostart_switches() {
+        let launch = parse_launch(["rasklad.exe", "--minimized"]);
+        assert!(launch.minimized);
+        assert!(!launch.debug);
+        assert!(launch.apply_autostart.is_none());
+    }
+
+    #[test]
+    fn parses_debug_and_elevated() {
+        let launch = parse_launch(["rasklad.exe", "--debug", "--elevated"]);
+        assert!(launch.debug);
+        assert!(launch.wait_primary);
+        assert!(!launch.minimized);
+    }
+
+    #[test]
+    fn parses_the_helper_key() {
+        let launch = parse_launch(["rasklad.exe", "--apply-autostart", "task"]);
+        assert_eq!(launch.apply_autostart.as_deref(), Some("task"));
+        // A missing value must not be mistaken for a method.
+        assert!(parse_launch(["rasklad.exe", "--apply-autostart"]).apply_autostart.is_none());
+    }
 }
