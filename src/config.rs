@@ -402,25 +402,50 @@ mod imp {
     }
 
     pub fn apply_autostart(method: AutostartMethod, start_minimized: bool) -> io::Result<()> {
-        let _ = registry(false, start_minimized);
-        let _ = startup_folder(false, start_minimized);
-        let _ = scheduled_task(false, start_minimized);
+        // Build the requested entry first. The old order disabled everything
+        // before creating anything, so a failure in the middle left the user
+        // with no autostart at all.
         match method {
-            AutostartMethod::None => Ok(()),
+            AutostartMethod::None => {}
             AutostartMethod::RegistryRun => {
-                registry(true, start_minimized).and(verify_registry())
+                registry(true, start_minimized)?;
+                verify_registry()?;
             }
             AutostartMethod::StartupFolder => {
-                startup_folder(true, start_minimized).and_then(|_| match startup_lnk_path() {
-                    Ok(p) if p.exists() => Ok(()),
-                    _ => Err(io::Error::other("shortcut was not created",
-                    )),
-                })
+                startup_folder(true, start_minimized)?;
+                match startup_lnk_path() {
+                    Ok(p) if p.exists() => {}
+                    _ => return Err(io::Error::other("shortcut was not created")),
+                }
             }
             AutostartMethod::ScheduledTask => {
-                scheduled_task(true, start_minimized).and(verify_task())
+                scheduled_task(true, start_minimized)?;
+                verify_task()?;
             }
         }
+
+        // The three mechanisms are mutually exclusive. The new entry is in
+        // place by now, so the others can go.
+        match method {
+            AutostartMethod::RegistryRun => {
+                let _ = startup_folder(false, start_minimized);
+                let _ = scheduled_task(false, start_minimized);
+            }
+            AutostartMethod::StartupFolder => {
+                let _ = registry(false, start_minimized);
+                let _ = scheduled_task(false, start_minimized);
+            }
+            AutostartMethod::ScheduledTask => {
+                let _ = registry(false, start_minimized);
+                let _ = startup_folder(false, start_minimized);
+            }
+            AutostartMethod::None => {
+                let _ = registry(false, start_minimized);
+                let _ = startup_folder(false, start_minimized);
+                let _ = scheduled_task(false, start_minimized);
+            }
+        }
+        Ok(())
     }
 
     /// Read the Run value back to prove the entry is really there.
