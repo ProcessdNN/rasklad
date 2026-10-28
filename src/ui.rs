@@ -149,7 +149,7 @@ fn folder_button(ui: &mut egui::Ui) -> egui::Response {
         painter.rect_stroke(
             body,
             2.0,
-            egui::Stroke::new(1.2, color),
+            egui::Stroke::new(1.2_f32, color),
             egui::StrokeKind::Inside,
         );
     }
