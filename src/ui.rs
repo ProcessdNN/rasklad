@@ -245,11 +245,19 @@ impl App {
                         let at = crate::winshow::main_window_position()
                             .map(|(x, y)| format!("{x},{y}"))
                             .unwrap_or_else(|| "?".into());
-                        crate::winshow::center_main_window();
                         crate::diag::log(&format!(
                             "startup: window hidden after {} ms (was at {at})",
                             started.elapsed().as_millis()
                         ));
+                        // Move it to the middle only after the hide has
+                        // settled: ShowWindow is asynchronous when it comes
+                        // from another thread, and moving a still-visible
+                        // window is exactly what made it flash in the centre.
+                        std::thread::sleep(Duration::from_millis(500));
+                        crate::winshow::center_main_window();
+                        if let Some((x, y)) = crate::winshow::main_window_position() {
+                            crate::diag::log(&format!("startup: window moved to {x},{y}"));
+                        }
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(5));
