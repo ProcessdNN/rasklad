@@ -1036,6 +1036,18 @@ impl eframe::App for App {
                     ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
                 }
             }
+
+            // Version in the corner: painted, not laid out, so it costs no
+            // height and cannot be selected. It sits in the panel margin,
+            // clear of the text above it.
+            let corner = ui.max_rect().right_bottom() + egui::vec2(6.0, 5.0);
+            ui.painter().text(
+                corner,
+                egui::Align2::RIGHT_BOTTOM,
+                concat!("v", env!("CARGO_PKG_VERSION")),
+                egui::FontId::proportional(10.0),
+                ui.visuals().weak_text_color(),
+            );
         });
 
         if self.autostart_open {
