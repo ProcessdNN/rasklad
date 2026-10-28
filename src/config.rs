@@ -141,6 +141,10 @@ pub enum AutostartState {
     Stale(String),
     /// Registered, but the command has no usable path.
     Empty,
+    /// The check itself failed, so nothing is known about the entry. Kept
+    /// apart from `Missing` on purpose: a failed query must not look like a
+    /// missing entry and trigger a repair.
+    Unknown,
 }
 
 impl AutostartState {
@@ -152,7 +156,7 @@ impl AutostartState {
         match self {
             Self::Missing | Self::Empty => true,
             Self::Stale(path) => !std::path::Path::new(path).exists(),
-            Self::Disabled | Self::Ok => false,
+            Self::Disabled | Self::Ok | Self::Unknown => false,
         }
     }
 
@@ -165,6 +169,7 @@ impl AutostartState {
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Disabled | Self::Ok => None,
+            Self::Unknown => Some("Could not check the autostart entry.".into()),
             Self::Missing => Some("Autostart entry was missing — recreated.".into()),
             Self::Empty => Some("Autostart entry had no path — repaired.".into()),
             Self::Stale(p) if std::path::Path::new(p).exists() => Some(format!(
@@ -295,7 +300,12 @@ mod imp {
             "/XML".into(),
         ]) {
             Ok(out) if out.status.success() => out,
-            _ => return AutostartState::Missing,
+            // schtasks exits with 1 when the task does not exist. Anything
+            // else - blocked, timed out, access denied - means the query
+            // failed, and reading that as "missing" used to send the app off
+            // to rebuild an entry that was probably fine.
+            Ok(out) if out.status.code() == Some(1) => return AutostartState::Missing,
+            _ => return AutostartState::Unknown,
         };
         let xml = String::from_utf8_lossy(&out.stdout);
         match xml_tag(&xml, "Command") {
@@ -666,6 +676,16 @@ mod tests {
         let back: Config = serde_json::from_str(&s).unwrap();
         assert!(!back.enabled);
         assert_eq!(back.autostart, AutostartMethod::ScheduledTask);
+    }
+
+    #[test]
+    fn a_failed_check_is_not_a_broken_entry() {
+        // The repair path only runs for broken states; a failed query must
+        // not end up there.
+        assert!(!AutostartState::Unknown.is_broken());
+        assert!(!AutostartState::Unknown.is_stale_but_valid());
+        assert!(AutostartState::Unknown.message().is_some());
+        assert!(AutostartState::Missing.is_broken());
     }
 
     #[test]
