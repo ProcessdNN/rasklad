@@ -413,9 +413,7 @@ mod imp {
             AutostartMethod::StartupFolder => {
                 startup_folder(true, start_minimized).and_then(|_| match startup_lnk_path() {
                     Ok(p) if p.exists() => Ok(()),
-                    _ => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "shortcut was not created",
+                    _ => Err(io::Error::other("shortcut was not created",
                     )),
                 })
             }
@@ -436,9 +434,7 @@ mod imp {
         if value.contains("rasklad") {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Run entry missing after write",
+            Err(io::Error::other("Run entry missing after write",
             ))
         }
     }
@@ -467,9 +463,7 @@ mod imp {
         if out.status.success() {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "task missing after creation",
+            Err(io::Error::other("task missing after creation",
             ))
         }
     }
@@ -522,7 +516,7 @@ mod imp {
         use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
         fn into(e: windows::core::Error) -> io::Error {
-            io::Error::new(io::ErrorKind::Other, e)
+            io::Error::other(e)
         }
 
         unsafe {
@@ -610,9 +604,7 @@ mod imp {
         if out.status.success() {
             Ok(())
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
+            Err(io::Error::other(format!(
                     "schtasks {} failed: {}",
                     op,
                     String::from_utf8_lossy(&out.stderr)

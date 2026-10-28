@@ -80,7 +80,7 @@ fn frame_rgba(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let mut rgba = Vec::with_capacity(width * height * 4);
     for y in (0..height).rev() {
         let row = &pixels[y * stride..][..stride];
-        for px in row.chunks_exact(4) {
+        for px in row.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
         }
     }

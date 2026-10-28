@@ -797,7 +797,7 @@ impl App {
         let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
             && ctx
                 .input(|i| i.pointer.interact_pos())
-                .map_or(true, |p| !inside.contains(p));
+                .is_none_or(|p| !inside.contains(p));
         let lost_focus = ctx.input(|i| i.viewport().focused) == Some(false);
         if clicked_outside || lost_focus || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
