@@ -219,6 +219,9 @@ pub struct App {
     diag_copied: bool,
     /// Filled by the thread that builds the diagnostics report.
     report_slot: Arc<std::sync::Mutex<Option<String>>>,
+    /// "Start minimized" changed while the window was open: the entry is
+    /// re-applied once, when the window closes, instead of on every click.
+    autostart_dirty: bool,
 }
 
 impl App {
@@ -342,6 +345,7 @@ impl App {
             rec_down: std::collections::HashSet::new(),
             diag_copied: false,
             report_slot: Arc::new(std::sync::Mutex::new(None)),
+            autostart_dirty: false,
         }
     }
 
@@ -365,20 +369,20 @@ impl App {
         // window can never claim an autostart that is not there.
         let start_minimized = self.shared.config.lock().unwrap().start_minimized;
         *self.shared.autostart_error.lock().unwrap() = None;
+        // This apply already carries the current "start minimized" value.
+        self.autostart_dirty = false;
         self.apply_autostart(ctx, method, start_minimized);
     }
 
-    fn set_start_minimized(&mut self, ctx: &egui::Context, on: bool) {
-        let (method, start_minimized) = {
+    fn set_start_minimized(&mut self, _ctx: &egui::Context, on: bool) {
+        {
             let mut cfg = self.shared.config.lock().unwrap();
             cfg.start_minimized = on;
             let _ = config::save(&cfg);
-            (cfg.autostart, cfg.start_minimized)
-        };
-        // Re-apply so the entry picks up the new argument list.
-        if method != AutostartMethod::None {
-            self.apply_autostart(ctx, method, start_minimized);
         }
+        // Re-applying the entry is what costs a UAC prompt, so it happens
+        // once when the window closes rather than on every click.
+        self.autostart_dirty = true;
     }
 
     /// Apply the autostart entry. The logon task needs administrator rights,
@@ -804,12 +808,7 @@ impl App {
         if let Some(action) = chosen {
             self.menu_open = false;
             match action {
-                MenuAction::Autostart => {
-                    // A failure belongs to the last attempt, not to the
-                    // state of the world.
-                    *self.shared.autostart_error.lock().unwrap() = None;
-                    self.autostart_open = true;
-                }
+                MenuAction::Autostart => self.autostart_open = true,
                 MenuAction::Advanced => self.advanced_open = true,
                 MenuAction::Exit => self.quit(),
             }
