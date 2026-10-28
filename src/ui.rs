@@ -180,6 +180,8 @@ pub struct App {
     rec_down: std::collections::HashSet<u32>,
     /// The diagnostics report has been copied at least once.
     diag_copied: bool,
+    /// Frames left to re-assert "stay hidden" after a `--minimized` start.
+    hide_frames: u8,
 }
 
 impl App {
@@ -188,6 +190,7 @@ impl App {
         cmds: Sender<WorkerCmd>,
         worker: JoinHandle<()>,
         icon: Arc<egui::IconData>,
+        start_hidden: bool,
     ) -> Self {
         // Verify the autostart entry at startup: the registry value, the
         // shortcut or the scheduled task outlives the exe it points at, so
@@ -254,6 +257,7 @@ impl App {
             was_focused: false,
             rec_down: std::collections::HashSet::new(),
             diag_copied: false,
+            hide_frames: if start_hidden { 5 } else { 0 },
         }
     }
 
@@ -736,6 +740,15 @@ impl eframe::App for App {
         }
 
         // Window close button hides to tray instead of exiting.
+        // eframe shows the window unconditionally after the first frame (its
+        // fix for the white flash on startup), so `with_visible(false)` alone
+        // cannot keep a --minimized start in the tray. Re-assert it for a few
+        // frames, then let the tray icon own the window again.
+        if self.hide_frames > 0 {
+            self.hide_frames -= 1;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
@@ -972,7 +985,7 @@ pub fn run(
             // Only explanatory text is selectable; button/field labels aren't.
             cc.egui_ctx.style_mut(|s| s.interaction.selectable_labels = false);
             spawn_events(cc.egui_ctx.clone(), shared.clone(), app_cmds, show_event.0 as usize);
-            Ok(Box::new(App::new(shared, cmds, worker, icon)))
+            Ok(Box::new(App::new(shared, cmds, worker, icon, !visible)))
         }),
     );
 }
