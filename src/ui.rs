@@ -481,7 +481,7 @@ impl App {
 
     fn autostart_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
         // Pop next to the main window instead of wherever the WM puts it.
-        let size = egui::vec2(320.0, 196.0);
+        let size = egui::vec2(320.0, 216.0);
         let builder = self
             .child_builder(ctx, "Autostart", [size.x, size.y])
             .with_visible(self.autostart_win.shown);
