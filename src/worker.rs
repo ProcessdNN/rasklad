@@ -68,6 +68,9 @@ pub fn run(
 
         let _tray = add_tray_icon(icon_rgba.clone(), menu, enabled);
 
+        // Same thread, same message loop: the watcher needs one to work.
+        crate::theme::install_watcher(shared.clone());
+
         let hhk = match hook::install(shared.clone()) {
             Ok(hhk) => hhk,
             Err(e) => {

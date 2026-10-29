@@ -32,6 +32,8 @@ pub struct Shared {
     /// Last autostart failure, shown in red until the window is reopened or
     /// an apply succeeds.
     pub autostart_error: Mutex<Option<String>>,
+    /// Windows told us the theme or the accent changed.
+    pub theme_dirty: AtomicBool,
 }
 
 impl Shared {
@@ -44,6 +46,7 @@ impl Shared {
             autostart_note: Mutex::new(None),
             autostart_pending: AtomicBool::new(false),
             autostart_error: Mutex::new(None),
+            theme_dirty: AtomicBool::new(false),
         }
     }
 }

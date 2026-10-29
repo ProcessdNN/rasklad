@@ -935,6 +935,11 @@ impl eframe::App for App {
         }
 
         // Window close button hides to tray instead of exiting.
+        // Windows said the theme or the accent changed.
+        if self.shared.theme_dirty.swap(false, Ordering::SeqCst) {
+            ctx.set_visuals(crate::theme::current());
+        }
+
         // The diagnostics report is built on a worker thread; copy it here,
         // where the egui output is actually collected.
         if let Some(text) = self.report_slot.lock().unwrap().take() {
@@ -1152,6 +1157,11 @@ fn spawn_events(
                 }
                 _ => {}
             }
+        }
+        // The watcher window runs on the worker thread and only sets a flag;
+        // this loop is what turns it into a repaint.
+        if shared.theme_dirty.load(Ordering::SeqCst) {
+            ctx.request_repaint();
         }
         unsafe {
             if WaitForSingleObject(show_event, 0) == WAIT_OBJECT_0 {

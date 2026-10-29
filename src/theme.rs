@@ -5,7 +5,18 @@
 //! Windows keeps it in the registry as `0xAABBGGRR`, so the byte order is not
 //! the one most people expect.
 
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
+
 use eframe::egui::{Color32, Stroke, Visuals};
+use windows::core::w;
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, RegisterClassW, WM_SETTINGCHANGE, WNDCLASSW, WS_POPUP,
+};
+
+use crate::shared::Shared;
 
 /// How much the accent has to stand out from the panel to be used at all.
 /// Below this it would be a fill nobody can see, so the neutral palette wins.
@@ -50,6 +61,70 @@ pub fn build(light: bool, accent: Option<(u8, u8, u8)>) -> Visuals {
     }
 
     visuals
+}
+
+static WATCHED: OnceLock<Arc<Shared>> = OnceLock::new();
+
+/// Receives the broadcast Windows sends when colours change.
+///
+/// A message-only window would not do: broadcasts go to top-level windows
+/// only, and a message-only window is not one. This one is top-level and
+/// never shown.
+unsafe extern "system" fn watcher_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_SETTINGCHANGE {
+        if let Some(shared) = WATCHED.get() {
+            shared.theme_dirty.store(true, Ordering::SeqCst);
+        }
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/// Start watching for theme and accent changes.
+///
+/// Must be called from a thread that pumps messages, which the worker already
+/// does for the tray icon and the hook.
+pub fn install_watcher(shared: Arc<Shared>) {
+    let _ = WATCHED.set(shared);
+    unsafe {
+        let Ok(module) = GetModuleHandleW(None) else {
+            crate::diag::log("theme watcher: no module handle");
+            return;
+        };
+        let instance = HINSTANCE(module.0);
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(watcher_proc),
+            hInstance: instance,
+            lpszClassName: w!("rasklad-settings-watch"),
+            ..Default::default()
+        };
+        if RegisterClassW(&class) == 0 {
+            crate::diag::log("theme watcher: could not register the class");
+            return;
+        }
+        let hwnd = CreateWindowExW(
+            Default::default(),
+            w!("rasklad-settings-watch"),
+            w!(""),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(instance),
+            None,
+        );
+        match hwnd {
+            Ok(_) => crate::diag::log("theme watcher installed"),
+            Err(e) => crate::diag::log(&format!("theme watcher: {e:?}")),
+        }
+    }
 }
 
 /// Windows stores the accent as `0xAABBGGRR`: red in the low byte.
