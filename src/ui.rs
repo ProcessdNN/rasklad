@@ -1213,13 +1213,8 @@ pub fn run(
             // Only explanatory text is selectable; button/field labels aren't.
             cc.egui_ctx
                 .style_mut(|s| s.interaction.selectable_labels = false);
-            // Follow the Windows theme instead of always drawing a dark panel.
-            cc.egui_ctx
-                .set_visuals(if crate::winshow::system_uses_light_theme() {
-                    egui::Visuals::light()
-                } else {
-                    egui::Visuals::dark()
-                });
+            // Follow the Windows theme, and its accent colour with it.
+            cc.egui_ctx.set_visuals(crate::theme::current());
             spawn_events(
                 cc.egui_ctx.clone(),
                 shared.clone(),

@@ -17,6 +17,8 @@ mod instance;
 #[cfg(windows)]
 mod switcher;
 #[cfg(windows)]
+mod theme;
+#[cfg(windows)]
 mod ui;
 #[cfg(windows)]
 mod winshow;
