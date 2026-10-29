@@ -104,7 +104,7 @@ mod tests {
                 "frame {size} buffer"
             );
             assert!(
-                rgba.chunks_exact(4).any(|p| p[3] > 0),
+                rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0),
                 "frame {size} is fully transparent"
             );
         }

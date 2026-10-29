@@ -11,7 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # Cheap gates first: a formatting slip or a lint should not wait for a
+      # full build to be reported.
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
       - uses: actions/upload-artifact@v7

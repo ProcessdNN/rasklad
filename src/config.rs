@@ -587,32 +587,6 @@ mod imp {
     }
 
     /// A logon task via schtasks.exe.
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        const EXE: &str = "C:/apps/rasklad.exe";
-
-        #[test]
-        fn task_runs_with_highest_privileges() {
-            let joined = task_args(std::path::Path::new(EXE), true).join(" ");
-            assert!(joined.contains("/RL HIGHEST"), "{joined}");
-            assert!(joined.contains("/SC ONLOGON"), "{joined}");
-            assert!(
-                joined.contains(&format!("\"{EXE}\" --minimized")),
-                "{joined}"
-            );
-        }
-
-        #[test]
-        fn start_minimized_controls_the_argument() {
-            let joined = task_args(std::path::Path::new(EXE), false).join(" ");
-            assert!(!joined.contains("--minimized"), "{joined}");
-            assert_eq!(launch_arguments(false), "");
-            assert_eq!(launch_arguments(true), "--minimized");
-        }
-    }
-
     fn scheduled_task(enable: bool, start_minimized: bool) -> io::Result<()> {
         let (args, op): (Vec<String>, &str) = if enable {
             let exe = std::env::current_exe()?;
@@ -637,6 +611,32 @@ mod imp {
                 op,
                 String::from_utf8_lossy(&out.stderr)
             )))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const EXE: &str = "C:/apps/rasklad.exe";
+
+        #[test]
+        fn task_runs_with_highest_privileges() {
+            let joined = task_args(std::path::Path::new(EXE), true).join(" ");
+            assert!(joined.contains("/RL HIGHEST"), "{joined}");
+            assert!(joined.contains("/SC ONLOGON"), "{joined}");
+            assert!(
+                joined.contains(&format!("\"{EXE}\" --minimized")),
+                "{joined}"
+            );
+        }
+
+        #[test]
+        fn start_minimized_controls_the_argument() {
+            let joined = task_args(std::path::Path::new(EXE), false).join(" ");
+            assert!(!joined.contains("--minimized"), "{joined}");
+            assert_eq!(launch_arguments(false), "");
+            assert_eq!(launch_arguments(true), "--minimized");
         }
     }
 }
