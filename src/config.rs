@@ -221,6 +221,22 @@ mod imp {
     /// Name of the logon task in Task Scheduler.
     const TASK_NAME: &str = "Rasklad";
 
+    /// Forget everything: the next start reads the defaults.
+    pub fn delete() {
+        let _ = std::fs::remove_file(config_path());
+    }
+
+    /// True when a logon task exists, whatever state it is in.
+    ///
+    /// Used to decide whether removing the autostart needs the elevated
+    /// helper: deleting a highest-privileges task needs administrator rights.
+    pub fn task_present() -> bool {
+        !matches!(
+            autostart_state(AutostartMethod::ScheduledTask),
+            AutostartState::Missing
+        )
+    }
+
     pub fn config_path() -> PathBuf {
         let base = std::env::var_os("APPDATA")
             .map(PathBuf::from)

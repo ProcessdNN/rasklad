@@ -25,6 +25,65 @@ mod winshow;
 #[cfg(windows)]
 mod worker;
 
+/// Ask the two questions a `--reset` cannot answer, then wipe the settings.
+///
+/// The running copy is asked to leave first: it holds the settings in memory
+/// and would write them back over the reset at the next change.
+///
+/// Returns false when the user backed out.
+fn reset_settings() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDNO, IDYES, MB_ICONQUESTION, MB_YESNOCANCEL,
+    };
+
+    let ask = |text: &str| unsafe {
+        MessageBoxW(
+            None,
+            &windows::core::HSTRING::from(text),
+            &windows::core::HSTRING::from("Rasklad"),
+            MB_YESNOCANCEL | MB_ICONQUESTION,
+        )
+    };
+
+    if ask("Reset all settings to their defaults?\n\n\
+         The hotkey, the caps combo and both switches go back to how they were \
+         on first run.")
+        != IDYES
+    {
+        return false;
+    }
+
+    let clear_autostart = match ask("Remove the autostart entry as well?\n\n\
+         Yes - remove it.  No - keep it.  Cancel - do not reset anything.")
+    {
+        IDYES => true,
+        IDNO => false,
+        _ => return false,
+    };
+
+    instance::request_quit();
+    if !instance::wait_until_free(std::time::Duration::from_secs(5)) {
+        diag::log("reset: the running instance did not exit");
+        return false;
+    }
+
+    if clear_autostart {
+        // Deleting a highest-privileges task needs administrator rights, and
+        // this process may not have them yet.
+        if !elevation::is_elevated() && config::task_present() {
+            let ok = elevation::run_elevated_wait("--apply-autostart none");
+            diag::log(&format!("reset: autostart cleared by helper, ok={ok}"));
+        } else {
+            let ok = config::apply_autostart(config::AutostartMethod::None, true).is_ok();
+            diag::log(&format!("reset: autostart cleared, ok={ok}"));
+        }
+    }
+
+    config::delete();
+    diag::log("reset: settings wiped");
+    true
+}
+
 /// Command line switches. Parsed in one place so the flag handling can be
 /// tested without starting the app.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -42,6 +101,8 @@ struct Launch {
     version: bool,
     /// `--help`: print the usage and exit.
     help: bool,
+    /// `--reset`: wipe the settings before starting.
+    reset: bool,
 }
 
 fn parse_launch<I, S>(args: I) -> Launch
@@ -63,6 +124,7 @@ where
         apply_autostart,
         version: has("--version") || has("-V"),
         help: has("--help") || has("-h"),
+        reset: has("--reset"),
     }
 }
 
@@ -77,6 +139,7 @@ const USAGE: &str = concat!(
      \x20 --debug              write the diagnostic log for this run\n\
      \x20 --version            print the version and exit\n\
      \x20 --help               print this text and exit\n\
+     \x20 --reset              wipe the settings and start fresh\n\
      \n\
      Without arguments the settings window opens. Autostart passes --minimized.\n"
 );
@@ -174,7 +237,9 @@ fn main() {
     }
 
     diag::install_panic_hook();
-    diag::init(debug);
+    // A reset is destructive and happens before the window exists, so its
+    // trace is worth a log even without --debug.
+    diag::init(debug || launch.reset);
 
     // One-shot privileged helper, started by the Autostart window when the
     // selected method needs administrator rights. It applies the entry from
@@ -189,13 +254,22 @@ fn main() {
         std::process::exit(if ok { 0 } else { 1 });
     }
 
-    let show_event = match if wait_primary {
+    if launch.reset && !reset_settings() {
+        return;
+    }
+
+    let (show_event, _instance) = match if wait_primary {
         instance::acquire_primary_wait(10_000)
     } else {
         instance::acquire()
     } {
-        instance::Instance::Secondary => return,
-        instance::Instance::Primary { show, .. } => show,
+        instance::Instance::Secondary => {
+            diag::log("another instance is running");
+            return;
+        }
+        // The mutex has to outlive this match: closing its handle would hand
+        // the single-instance guard back before the app even starts.
+        instance::Instance::Primary { _mutex, show, quit } => (show, (_mutex, quit)),
     };
 
     let shared = Arc::new(shared::Shared::new(config::load()));
@@ -273,6 +347,13 @@ mod tests {
         assert!(parse_launch(["rasklad.exe", "-h"]).help);
         let plain = parse_launch(["rasklad.exe"]);
         assert!(!plain.version && !plain.help);
+    }
+
+    #[test]
+    fn parses_the_reset_switch() {
+        assert!(parse_launch(["rasklad.exe", "--reset"]).reset);
+        assert!(!parse_launch(["rasklad.exe"]).reset);
+        assert!(!parse_launch(["rasklad.exe", "--minimized"]).reset);
     }
 
     #[test]

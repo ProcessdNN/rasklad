@@ -1273,6 +1273,31 @@ fn spawn_events(
     cmds: Sender<WorkerCmd>,
     show_event: usize,
 ) {
+    // Used by the menu and by `--reset`, which asks through a named event.
+    let shutdown = |cmds: &Sender<WorkerCmd>, shared: &Shared| {
+        let _ = cmds.send(WorkerCmd::Shutdown);
+        worker::notify(shared);
+        // Give the worker a moment to unhook and drop the tray icon before
+        // the process dies.
+        std::thread::sleep(Duration::from_millis(250));
+        std::process::exit(0);
+    };
+    // SYNCHRONIZE: the crate only exposes it as a file access right, so the
+    // bit is spelled out here.
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    let quit_event = unsafe {
+        windows::Win32::System::Threading::OpenEventW(
+            windows::Win32::System::Threading::EVENT_MODIFY_STATE
+                | windows::Win32::System::Threading::SYNCHRONIZATION_ACCESS_RIGHTS(SYNCHRONIZE),
+            false,
+            windows::core::w!("rasklad-quit"),
+        )
+        .ok()
+    }
+    // Raw handles are not `Send`; the events thread rebuilds it, the same way
+    // it does with the show event.
+    .map_or(0, |handle| handle.0 as usize);
+
     let show = |ctx: &egui::Context| {
         // A --minimized start parks the window outside the screen.
         crate::winshow::ensure_on_screen();
@@ -1316,15 +1341,15 @@ fn spawn_events(
                     worker::set_enabled(&shared, &cmds, on);
                     ctx.request_repaint();
                 }
-                menu_id::QUIT => {
-                    let _ = cmds.send(WorkerCmd::Shutdown);
-                    worker::notify(&shared);
-                    // Give the worker a moment to unhook and drop the tray
-                    // icon before the process dies.
-                    std::thread::sleep(Duration::from_millis(250));
-                    std::process::exit(0);
-                }
+                menu_id::QUIT => shutdown(&cmds, &shared),
                 _ => {}
+            }
+        }
+        if quit_event != 0 {
+            let event = HANDLE(quit_event as *mut _);
+            if unsafe { WaitForSingleObject(event, 0) } == WAIT_OBJECT_0 {
+                crate::diag::log("quit requested from another process");
+                shutdown(&cmds, &shared);
             }
         }
         // The watcher window runs on the worker thread and only sets a flag;
