@@ -389,6 +389,17 @@ mod imp {
     /// Errors from disabling are ignored (the entry may simply not exist);
     /// a failure to enable the requested method is reported.
     /// Command line used by every autostart mechanism.
+    /// The command line the autostart entry will hold, for the window to show.
+    ///
+    /// All three mechanisms run the same thing; the scheduled task adds its
+    /// own flags to `schtasks`, not to this line.
+    pub fn command_preview(start_minimized: bool) -> String {
+        match std::env::current_exe() {
+            Ok(exe) => launch_command(&exe, start_minimized),
+            Err(_) => "rasklad.exe".to_string(),
+        }
+    }
+
     fn launch_command(exe: &std::path::Path, start_minimized: bool) -> String {
         if start_minimized {
             format!("\"{}\" --minimized", exe.display())
@@ -647,6 +658,14 @@ pub use imp::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_preview_matches_what_will_be_written() {
+        // Quoted, because the path usually has spaces in it.
+        assert!(command_preview(true).starts_with('"'));
+        assert!(command_preview(true).ends_with("--minimized"));
+        assert!(!command_preview(false).contains("--minimized"));
+    }
 
     #[test]
     fn serde_defaults() {

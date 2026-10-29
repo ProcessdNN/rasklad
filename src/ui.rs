@@ -757,6 +757,23 @@ impl App {
                         self.set_start_minimized(ctx, minimized);
                     }
 
+                    // What Windows will actually run. The autostart questions
+                    // that took the longest to answer were always about this
+                    // line, so it is on screen instead of in the docs.
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Starts:").weak().size(11.0));
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(crate::config::command_preview(
+                                cfg.start_minimized,
+                            ))
+                            .monospace()
+                            .size(10.5),
+                        )
+                        .wrap()
+                        .selectable(true),
+                    );
+
                     // Registry and Startup-folder entries run with the normal
                     // user token: only the logon task can start elevated, and
                     // only it does so without a UAC prompt.
