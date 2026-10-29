@@ -273,6 +273,11 @@ pub struct App {
     autostart_note: Option<String>,
     autostart_win: ChildWindow,
     advanced_open: bool,
+    /// When the reset button was armed, so the "Sure?" state can expire.
+    reset_armed: Option<f64>,
+    /// The confirmation window is open.
+    confirm_open: bool,
+    confirm_win: ChildWindow,
     advanced_win: ChildWindow,
     /// The ⋯ menu is drawn in this window as a floating card under the
     /// button (see `menu_popup`).
@@ -409,6 +414,9 @@ impl App {
             autostart_note: None,
             autostart_win: ChildWindow::default(),
             advanced_open: false,
+            reset_armed: None,
+            confirm_open: false,
+            confirm_win: ChildWindow::default(),
             advanced_win: ChildWindow::default(),
             menu_open: false,
             menu_button_rect: egui::Rect::NOTHING,
@@ -606,6 +614,84 @@ impl App {
         builder
     }
 
+    /// Ask the one question a reset cannot answer by itself.
+    fn confirm_viewport(&mut self, ctx: &egui::Context) {
+        let width = 320.0;
+        let builder = self
+            .child_builder(ctx, "Reset settings", [width, 150.0])
+            .with_visible(self.confirm_win.shown);
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("reset-confirm-window"),
+            builder,
+            |ctx, _class| {
+                if !self.confirm_win.ready(ctx) {
+                    return;
+                }
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    self.confirm_open = false;
+                    self.confirm_win.reset();
+                    return;
+                }
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.add_space(2.0);
+                    ui.label("Reset everything to its defaults?");
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Label::new(
+                            "The hotkey, the caps combo and both switches go back to how \
+                             they were on first run.",
+                        )
+                        .selectable(true),
+                    );
+                    ui.add_space(8.0);
+                    ui.label("Remove the autostart entry as well?");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Keep autostart").clicked() {
+                            self.reset_settings(ctx, false);
+                        }
+                        if ui.button("Clear autostart").clicked() {
+                            self.reset_settings(ctx, true);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.confirm_open = false;
+                            self.confirm_win.reset();
+                        }
+                    });
+                    fit_height(ctx, ui, width);
+                });
+            },
+        );
+    }
+
+    /// Put the settings back to their defaults, and make the autostart entry
+    /// follow: removed, or rewritten with the default argument list.
+    fn reset_settings(&mut self, ctx: &egui::Context, clear_autostart: bool) {
+        let method = if clear_autostart {
+            AutostartMethod::None
+        } else {
+            self.shared.config.lock().unwrap().autostart
+        };
+        {
+            let mut cfg = self.shared.config.lock().unwrap();
+            *cfg = Config::default();
+            cfg.autostart = method;
+            let _ = config::save(&cfg);
+        }
+        crate::diag::log(&format!("settings reset, autostart={}", method.key()));
+
+        self.confirm_open = false;
+        self.confirm_win.reset();
+        self.reset_armed = None;
+        self.autostart_sel = AutostartMethod::RegistryRun;
+        // The keyboard hook reads the configuration on every event, so the
+        // default hotkey is live immediately; the entry still has to be
+        // rewritten to match.
+        self.apply_autostart(ctx, method, true);
+        ctx.request_repaint();
+    }
+
     fn advanced_viewport(&mut self, ctx: &egui::Context, cfg: &Config) {
         let width = 300.0;
         let builder = self
@@ -622,6 +708,7 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                     self.advanced_open = false;
                     self.advanced_win.reset();
+                    self.reset_armed = None;
                 }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.add_space(2.0);
@@ -679,6 +766,31 @@ impl App {
                         ui.add_space(2.0);
                         ui.label("Copied to clipboard.");
                     }
+
+                    ui.add_space(10.0);
+                    let now = ctx.input(|i| i.time);
+                    let armed = self.reset_armed.is_some_and(|at| now - at < 4.0);
+                    if !armed {
+                        self.reset_armed = None;
+                    }
+                    let label = if armed { "Sure?" } else { "Reset to defaults" };
+                    if ui.button(label).clicked() {
+                        if armed {
+                            self.reset_armed = None;
+                            self.confirm_open = true;
+                        } else {
+                            self.reset_armed = Some(now);
+                        }
+                    }
+                    if armed {
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new("Click again to continue.")
+                                .weak()
+                                .size(11.0),
+                        );
+                    }
+
                     fit_height(ctx, ui, width);
                 });
             },
@@ -1137,6 +1249,9 @@ impl eframe::App for App {
         }
         if self.advanced_open {
             self.advanced_viewport(ctx, &cfg);
+        }
+        if self.confirm_open {
+            self.confirm_viewport(ctx);
         }
         if self.menu_open {
             self.menu_popup(ctx);
