@@ -49,6 +49,66 @@ thread_local! {
 
 /// Optional debug log: set `RASKLAD_LOG=<file>` to trace hook decisions.
 /// Costs nothing when the variable is unset.
+/// What the hook does with one key event.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Action {
+    /// Nothing special: Windows and the focused app see the key.
+    Pass,
+    /// Swallow it.
+    Swallow,
+    /// Swallow it and switch the layout.
+    Switch,
+    /// Swallow it and synthesise a bare Caps press.
+    ToggleCaps,
+}
+
+/// The configuration a single key event depends on.
+struct Decision {
+    enabled: bool,
+    hotkey: Hotkey,
+    caps_combo: CapsCombo,
+    /// Key whose press this hook swallowed and whose release is still due.
+    swallowed: u32,
+}
+
+/// Decide what happens to one key event.
+///
+/// Kept away from the Win32 calls on purpose: this is where the rules live,
+/// and they are worth testing without a keyboard and a message loop.
+fn decide(vk: u32, mods: Modifiers, down: bool, repeat: bool, d: &Decision) -> Action {
+    if !down {
+        // Only the release of a press we ate is ours to eat. Testing the
+        // hotkey here instead used to swallow Caps releases even while the
+        // app was switched off, which left Caps latched down.
+        return if d.swallowed == vk {
+            Action::Swallow
+        } else {
+            Action::Pass
+        };
+    }
+
+    let is_hotkey = d.enabled && d.hotkey.matches(vk, mods);
+    // While Caps is the layout trigger, every other Caps press has to be
+    // swallowed: Windows toggles caps mode natively on any modifier+Caps.
+    let caps_owned = d.enabled && vk == vk::VK_CAPITAL && d.hotkey.vk == vk::VK_CAPITAL;
+
+    if is_hotkey {
+        return if repeat {
+            // Auto-repeat: the key is already down, don't fire again.
+            Action::Swallow
+        } else {
+            Action::Switch
+        };
+    }
+    if caps_owned && d.caps_combo != CapsCombo::Off && d.caps_combo.matches(&mods) {
+        return Action::ToggleCaps;
+    }
+    if caps_owned {
+        return Action::Swallow;
+    }
+    Action::Pass
+}
+
 fn mod_bit(vk_code: u32) -> u8 {
     match vk_code {
         0x10 | 0xA0 | 0xA1 => M_SHIFT, // Shift / LShift / RShift
@@ -169,46 +229,38 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                     let cfg = shared.config.lock().unwrap();
                     (cfg.hotkey, cfg.caps_combo, cfg.enabled)
                 };
-                let is_hotkey = enabled && hotkey.matches(vk_code, mods_for(vk_code));
-                // While Caps is the layout trigger, every other Caps press
-                // must be swallowed — otherwise Windows toggles caps mode
-                // natively on ANY modifier+Caps. Only the configured combo
-                // gets through, as a synthetic tagged bare-Caps press.
-                // When the app is switched off we must not touch Caps at
-                // all: eating the key while doing nothing makes the app look
-                // broken instead of disabled.
-                let caps_owned =
-                    enabled && vk_code == vk::VK_CAPITAL && hotkey.vk == vk::VK_CAPITAL;
-
-                if down {
-                    let inject_caps = !is_hotkey
-                        && caps_owned
-                        && caps_combo != CapsCombo::Off
-                        && caps_combo.matches(&mods_for(vk_code));
-                    if is_hotkey {
-                        // Auto-repeat: the key is already down, don't fire again.
-                        if !is_down(vk_code) {
-                            crate::diag::log("hotkey fired");
-                            switcher::switch_layout();
-                        }
-                        SWALLOWED.set(vk_code);
+                let decision = Decision {
+                    enabled,
+                    hotkey,
+                    caps_combo,
+                    swallowed: SWALLOWED.with(|s| s.get()),
+                };
+                let action = decide(
+                    vk_code,
+                    mods_for(vk_code),
+                    down,
+                    is_down(vk_code),
+                    &decision,
+                );
+                match action {
+                    Action::Pass => {}
+                    Action::Switch => {
+                        crate::diag::log("hotkey fired");
+                        switcher::switch_layout();
+                        SWALLOWED.with(|s| s.set(vk_code));
                         return LRESULT(1);
                     }
-                    if inject_caps {
+                    Action::ToggleCaps => {
                         switcher::tap_key(vk::VK_CAPITAL);
-                    }
-                    if caps_owned {
-                        SWALLOWED.set(vk_code);
+                        SWALLOWED.with(|s| s.set(vk_code));
                         return LRESULT(1);
                     }
-                } else if SWALLOWED.get() == vk_code {
-                    // Swallow the release of a press we ate, so the app never
-                    // sees a dangling one. Tied to what we actually swallowed:
-                    // testing the hotkey alone used to eat Caps releases even
-                    // while the app was switched off, which left Caps latched
-                    // and the hotkey dead until a restart.
-                    SWALLOWED.set(0);
-                    return LRESULT(1);
+                    Action::Swallow => {
+                        // A press we ate is remembered so its release is eaten
+                        // too; that release then clears the memory.
+                        SWALLOWED.with(|s| s.set(if down { vk_code } else { 0 }));
+                        return LRESULT(1);
+                    }
                 }
             }
         }
@@ -239,5 +291,185 @@ pub fn install(shared: Arc<Shared>) -> windows::core::Result<HHOOK> {
 pub fn uninstall(hhk: HHOOK) {
     unsafe {
         let _ = UnhookWindowsHookEx(hhk);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NO_MODS: Modifiers = Modifiers {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        win: false,
+    };
+    const WIN: Modifiers = Modifiers {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        win: true,
+    };
+    const CTRL: Modifiers = Modifiers {
+        ctrl: true,
+        alt: false,
+        shift: false,
+        win: false,
+    };
+
+    fn caps_hotkey() -> Hotkey {
+        Hotkey {
+            vk: vk::VK_CAPITAL,
+            ctrl: false,
+            alt: false,
+            shift: false,
+            win: false,
+        }
+    }
+
+    fn ctrl_space() -> Hotkey {
+        Hotkey {
+            vk: 0x20,
+            ctrl: true,
+            alt: false,
+            shift: false,
+            win: false,
+        }
+    }
+
+    fn config(enabled: bool, hotkey: Hotkey, caps_combo: CapsCombo) -> Decision {
+        Decision {
+            enabled,
+            hotkey,
+            caps_combo,
+            swallowed: 0,
+        }
+    }
+
+    /// Plays a sequence of presses through the same rules the hook uses,
+    /// carrying the "press we ate" state the way the callback does.
+    struct Sim(Decision);
+
+    impl Sim {
+        fn new(enabled: bool, hotkey: Hotkey, caps_combo: CapsCombo) -> Self {
+            Self(config(enabled, hotkey, caps_combo))
+        }
+
+        fn press(&mut self, vk_code: u32, mods: Modifiers) -> Action {
+            let action = decide(vk_code, mods, true, false, &self.0);
+            if action != Action::Pass {
+                self.0.swallowed = vk_code;
+            }
+            action
+        }
+
+        fn release(&mut self, vk_code: u32) -> Action {
+            let action = decide(vk_code, NO_MODS, false, false, &self.0);
+            if action == Action::Swallow {
+                self.0.swallowed = 0;
+            }
+            action
+        }
+    }
+
+    #[test]
+    fn switched_off_lets_caps_through_both_ways() {
+        // The bug this guards: with the hotkey switched off, presses went to
+        // Windows but releases did not, and Caps stayed latched down.
+        let mut sim = Sim::new(false, caps_hotkey(), CapsCombo::Win);
+        assert_eq!(sim.press(vk::VK_CAPITAL, NO_MODS), Action::Pass);
+        assert_eq!(sim.release(vk::VK_CAPITAL), Action::Pass);
+        assert_eq!(sim.press(vk::VK_CAPITAL, NO_MODS), Action::Pass);
+        assert_eq!(sim.release(vk::VK_CAPITAL), Action::Pass);
+    }
+
+    #[test]
+    fn switched_on_caps_is_the_hotkey() {
+        let mut sim = Sim::new(true, caps_hotkey(), CapsCombo::Off);
+        assert_eq!(sim.press(vk::VK_CAPITAL, NO_MODS), Action::Switch);
+        assert_eq!(sim.release(vk::VK_CAPITAL), Action::Swallow);
+        // And it still works on the next press.
+        assert_eq!(sim.press(vk::VK_CAPITAL, NO_MODS), Action::Switch);
+        assert_eq!(sim.release(vk::VK_CAPITAL), Action::Swallow);
+    }
+
+    #[test]
+    fn auto_repeat_does_not_switch_twice() {
+        let d = config(true, caps_hotkey(), CapsCombo::Off);
+        assert_eq!(
+            decide(vk::VK_CAPITAL, NO_MODS, true, true, &d),
+            Action::Swallow
+        );
+        assert_eq!(
+            decide(vk::VK_CAPITAL, NO_MODS, true, false, &d),
+            Action::Switch
+        );
+    }
+
+    #[test]
+    fn a_press_we_ate_keeps_its_release() {
+        // Switched off between the press and the release: the press was
+        // eaten, so its release has to be eaten too.
+        let d = Decision {
+            enabled: false,
+            hotkey: caps_hotkey(),
+            caps_combo: CapsCombo::Off,
+            swallowed: vk::VK_CAPITAL,
+        };
+        assert_eq!(
+            decide(vk::VK_CAPITAL, NO_MODS, false, false, &d),
+            Action::Swallow
+        );
+    }
+
+    #[test]
+    fn modifier_caps_toggles_caps_mode() {
+        let d = config(true, caps_hotkey(), CapsCombo::Win);
+        assert_eq!(
+            decide(vk::VK_CAPITAL, WIN, true, false, &d),
+            Action::ToggleCaps
+        );
+    }
+
+    #[test]
+    fn caps_combo_off_swallows_without_toggling() {
+        let d = config(true, caps_hotkey(), CapsCombo::Off);
+        assert_eq!(
+            decide(vk::VK_CAPITAL, WIN, true, false, &d),
+            Action::Swallow
+        );
+    }
+
+    #[test]
+    fn a_different_hotkey_leaves_caps_alone() {
+        let d = config(true, ctrl_space(), CapsCombo::Win);
+        assert_eq!(
+            decide(vk::VK_CAPITAL, NO_MODS, true, false, &d),
+            Action::Pass
+        );
+        assert_eq!(decide(vk::VK_CAPITAL, WIN, true, false, &d), Action::Pass);
+        assert_eq!(
+            decide(vk::VK_CAPITAL, NO_MODS, false, false, &d),
+            Action::Pass
+        );
+    }
+
+    #[test]
+    fn a_different_hotkey_fires_and_keeps_its_release() {
+        let mut sim = Sim::new(true, ctrl_space(), CapsCombo::Win);
+        assert_eq!(sim.press(0x20, CTRL), Action::Switch);
+        assert_eq!(sim.release(0x20), Action::Swallow);
+        // A release we never ate stays untouched.
+        assert_eq!(sim.release(0x20), Action::Pass);
+    }
+
+    #[test]
+    fn nothing_is_swallowed_while_switched_off() {
+        // Whatever the key, an off app must not interfere.
+        let d = config(false, ctrl_space(), CapsCombo::Shift);
+        for vk_code in [vk::VK_CAPITAL, 0x20, 0x41] {
+            assert_eq!(decide(vk_code, NO_MODS, true, false, &d), Action::Pass);
+            assert_eq!(decide(vk_code, NO_MODS, false, false, &d), Action::Pass);
+        }
     }
 }
