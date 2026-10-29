@@ -149,6 +149,29 @@ pub fn system_uses_light_theme() -> bool {
         .unwrap_or(false)
 }
 
+/// True when Windows is set to animate controls and windows.
+///
+/// A fade between themes is exactly the sort of thing people turn this off
+/// for, so ask before animating anything.
+pub fn animations_enabled() -> bool {
+    use std::ffi::c_void;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+
+    let mut enabled = windows::core::BOOL::from(true);
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(&mut enabled as *mut _ as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .is_ok()
+            && enabled.as_bool()
+    }
+}
+
 /// Open a folder in Explorer. Returns false when the shell refused.
 pub fn open_folder(path: &std::path::Path) -> bool {
     use windows::core::{w, HSTRING, PCWSTR};

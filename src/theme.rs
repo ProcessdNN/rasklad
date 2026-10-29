@@ -8,6 +8,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 
+use eframe::egui::style::WidgetVisuals;
 use eframe::egui::{Color32, Stroke, Visuals};
 use windows::core::w;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -125,6 +126,67 @@ pub fn install_watcher(shared: Arc<Shared>) {
             Err(e) => crate::diag::log(&format!("theme watcher: {e:?}")),
         }
     }
+}
+
+/// How long a theme change takes to fade, in seconds.
+pub const FADE_SECONDS: f64 = 0.18;
+
+/// Blend two palettes. `t` runs from 0 (the old one) to 1 (the new one).
+///
+/// Only colours are blended; shapes, shadows and flags come from the new
+/// palette, since animating a corner radius or a shadow offset is not what a
+/// theme change is about.
+pub fn lerp(from: &Visuals, to: &Visuals, t: f32) -> Visuals {
+    let mut out = to.clone();
+    out.override_text_color = match (from.override_text_color, to.override_text_color) {
+        (Some(a), Some(b)) => Some(mix(a, b, t)),
+        _ => to.override_text_color,
+    };
+    out.widgets.noninteractive =
+        lerp_widget(&from.widgets.noninteractive, &to.widgets.noninteractive, t);
+    out.widgets.inactive = lerp_widget(&from.widgets.inactive, &to.widgets.inactive, t);
+    out.widgets.hovered = lerp_widget(&from.widgets.hovered, &to.widgets.hovered, t);
+    out.widgets.active = lerp_widget(&from.widgets.active, &to.widgets.active, t);
+    out.widgets.open = lerp_widget(&from.widgets.open, &to.widgets.open, t);
+    out.selection.bg_fill = mix(from.selection.bg_fill, to.selection.bg_fill, t);
+    out.selection.stroke.color = mix(from.selection.stroke.color, to.selection.stroke.color, t);
+    out.hyperlink_color = mix(from.hyperlink_color, to.hyperlink_color, t);
+    out.faint_bg_color = mix(from.faint_bg_color, to.faint_bg_color, t);
+    out.extreme_bg_color = mix(from.extreme_bg_color, to.extreme_bg_color, t);
+    out.code_bg_color = mix(from.code_bg_color, to.code_bg_color, t);
+    out.warn_fg_color = mix(from.warn_fg_color, to.warn_fg_color, t);
+    out.error_fg_color = mix(from.error_fg_color, to.error_fg_color, t);
+    out.window_fill = mix(from.window_fill, to.window_fill, t);
+    out.window_stroke.color = mix(from.window_stroke.color, to.window_stroke.color, t);
+    out.panel_fill = mix(from.panel_fill, to.panel_fill, t);
+    out.text_cursor.stroke.color = mix(
+        from.text_cursor.stroke.color,
+        to.text_cursor.stroke.color,
+        t,
+    );
+    out
+}
+
+fn lerp_widget(from: &WidgetVisuals, to: &WidgetVisuals, t: f32) -> WidgetVisuals {
+    WidgetVisuals {
+        bg_fill: mix(from.bg_fill, to.bg_fill, t),
+        weak_bg_fill: mix(from.weak_bg_fill, to.weak_bg_fill, t),
+        bg_stroke: Stroke::new(
+            to.bg_stroke.width,
+            mix(from.bg_stroke.color, to.bg_stroke.color, t),
+        ),
+        fg_stroke: Stroke::new(
+            to.fg_stroke.width,
+            mix(from.fg_stroke.color, to.fg_stroke.color, t),
+        ),
+        ..*to
+    }
+}
+
+/// Ease in and out, so the fade does not start and stop abruptly.
+pub fn ease(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Windows stores the accent as `0xAABBGGRR`: red in the low byte.
@@ -265,6 +327,43 @@ mod tests {
         assert!(contrast_ratio(visuals.hyperlink_color, panel) >= MIN_TEXT_CONTRAST);
         // Darkened, not replaced: it still has to look like the accent.
         assert!(luminance(visuals.hyperlink_color) < luminance(accent));
+    }
+
+    #[test]
+    fn blending_ends_on_the_target_palette() {
+        let dark = Visuals::dark();
+        let light = Visuals::light();
+        let start = lerp(&dark, &light, 0.0);
+        let end = lerp(&dark, &light, 1.0);
+        assert_eq!(start.panel_fill, dark.panel_fill);
+        assert_eq!(end.panel_fill, light.panel_fill);
+        assert_eq!(end.widgets.inactive.bg_fill, light.widgets.inactive.bg_fill);
+        assert_eq!(end.selection.bg_fill, light.selection.bg_fill);
+        assert_eq!(end.window_stroke.color, light.window_stroke.color);
+    }
+
+    #[test]
+    fn blending_passes_through_the_middle() {
+        let dark = Visuals::dark();
+        let light = Visuals::light();
+        let mid = lerp(&dark, &light, 0.5);
+        assert_ne!(mid.panel_fill, dark.panel_fill);
+        assert_ne!(mid.panel_fill, light.panel_fill);
+        assert!(luminance(mid.panel_fill) > luminance(dark.panel_fill));
+        assert!(luminance(mid.panel_fill) < luminance(light.panel_fill));
+    }
+
+    #[test]
+    fn easing_starts_and_ends_flat() {
+        assert_eq!(ease(0.0), 0.0);
+        assert_eq!(ease(1.0), 1.0);
+        assert!((ease(0.5) - 0.5).abs() < 1e-6);
+        // Slower than linear at the start, faster towards the end.
+        assert!(ease(0.25) < 0.25);
+        assert!(ease(0.75) > 0.75);
+        // Out of range input is clamped, not extrapolated.
+        assert_eq!(ease(-1.0), 0.0);
+        assert_eq!(ease(2.0), 1.0);
     }
 
     #[test]

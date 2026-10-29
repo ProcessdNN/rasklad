@@ -165,6 +165,13 @@ impl Drop for PendingGuard {
     }
 }
 
+/// A theme change in progress: the palette to blend from and to.
+struct Fade {
+    from: egui::Visuals,
+    to: egui::Visuals,
+    started: f64,
+}
+
 /// Colour for a warning that has to stay readable on either background.
 fn warn_color(ui: &egui::Ui) -> egui::Color32 {
     if ui.visuals().dark_mode {
@@ -287,6 +294,8 @@ pub struct App {
     /// "Start minimized" changed while the window was open: the entry is
     /// re-applied once, when the window closes, instead of on every click.
     autostart_dirty: bool,
+    /// Set while a theme change is fading.
+    fade: Option<Fade>,
 }
 
 impl App {
@@ -410,6 +419,7 @@ impl App {
             diag_copied: false,
             report_slot: Arc::new(std::sync::Mutex::new(None)),
             autostart_dirty: false,
+            fade: None,
         }
     }
 
@@ -937,7 +947,31 @@ impl eframe::App for App {
         // Window close button hides to tray instead of exiting.
         // Windows said the theme or the accent changed.
         if self.shared.theme_dirty.swap(false, Ordering::SeqCst) {
-            ctx.set_visuals(crate::theme::current());
+            let to = crate::theme::current();
+            if crate::winshow::animations_enabled() {
+                self.fade = Some(Fade {
+                    from: ctx.style().visuals.clone(),
+                    to,
+                    started: ctx.input(|i| i.time),
+                });
+            } else {
+                self.fade = None;
+                ctx.set_visuals(to);
+            }
+        }
+        // Advance a running fade; at the end the blend equals the new palette.
+        if let Some(fade) = self.fade.take() {
+            let elapsed = ctx.input(|i| i.time) - fade.started;
+            let t = (elapsed / crate::theme::FADE_SECONDS) as f32;
+            ctx.set_visuals(crate::theme::lerp(
+                &fade.from,
+                &fade.to,
+                crate::theme::ease(t),
+            ));
+            if t < 1.0 {
+                ctx.request_repaint();
+                self.fade = Some(fade);
+            }
         }
 
         // The diagnostics report is built on a worker thread; copy it here,
