@@ -43,6 +43,10 @@ settings. It is one exe with no installer, no runtime and no network access.
   Closing the window keeps the app running.
 - **One instance.** Launching the exe again opens the window of the running
   copy.
+- **Native colours.** The window follows the Windows light or dark theme and
+  takes its accent colour for selection, links and pressed buttons. Changing
+  either while it runs is picked up without a restart, and fades over in a
+  sixth of a second.
 - **No network.** No telemetry, no update check, no HTTP client in the
   dependency tree.
 
