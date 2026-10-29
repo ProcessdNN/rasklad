@@ -12,6 +12,24 @@
 const ICO: &[u8] = include_bytes!("../assets/icon.ico");
 
 /// (rgba, width, height) of an icon exactly `size` pixels square.
+/// A greyed-out copy of an RGBA image, used for the tray icon while the
+/// hotkey is switched off.
+///
+/// Colour is pulled towards its own luminance and the whole image is made
+/// half transparent, so it reads as "not active" on a light and on a dark
+/// taskbar alike while the shape stays recognisable.
+pub fn dimmed(rgba: &[u8]) -> Vec<u8> {
+    let mut out = rgba.to_vec();
+    for px in out.as_chunks_mut::<4>().0 {
+        let luma = 0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32;
+        for channel in px.iter_mut().take(3) {
+            *channel = (*channel as f32 * 0.4 + luma * 0.6) as u8;
+        }
+        px[3] = (px[3] as f32 * 0.55) as u8;
+    }
+    out
+}
+
 pub fn icon_rgba(size: u32) -> (Vec<u8>, u32, u32) {
     let frame = best_frame(ICO, size).expect("embedded icon frame");
     let (rgba, width, height) = frame_rgba(frame).expect("embedded icon frame data");
@@ -111,6 +129,19 @@ mod tests {
     }
 
     /// Sizes the .ico does not carry are scaled, not rejected.
+    #[test]
+    fn dimming_softens_the_colour_and_keeps_the_shape() {
+        let rgba = vec![200u8, 100, 50, 255, 0, 0, 0, 0];
+        let dim = dimmed(&rgba);
+        assert_eq!(dim.len(), rgba.len());
+        // Still visible, but softer.
+        assert!(dim[3] > 0 && dim[3] < 255);
+        // Colour pulled towards its own grey.
+        assert!(dim[0] < 200 && dim[1] > 100);
+        // A transparent pixel has nothing to soften.
+        assert_eq!(dim[7], 0);
+    }
+
     #[test]
     fn scales_missing_sizes() {
         let (rgba, w, h) = icon_rgba(96);

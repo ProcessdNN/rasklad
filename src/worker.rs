@@ -66,7 +66,7 @@ pub fn run(
         let mi_quit = MenuItem::with_id(menu_id::QUIT, "Quit", true, None);
         let _ = menu.append_items(&[&mi_enabled, &PredefinedMenuItem::separator(), &mi_quit]);
 
-        let _tray = add_tray_icon(icon_rgba, menu);
+        let _tray = add_tray_icon(icon_rgba.clone(), menu, enabled);
 
         let hhk = match hook::install(shared.clone()) {
             Ok(hhk) => hhk,
@@ -85,6 +85,14 @@ pub fn run(
                         WorkerCmd::RefreshMenu => {
                             let on = shared.config.lock().unwrap().enabled;
                             mi_enabled.set_checked(on);
+                            // The icon is the only always-visible answer to
+                            // "is this thing on", so it follows the switch.
+                            if let Some(tray) = _tray.as_ref() {
+                                if let Some(icon) = tray_icon(&icon_rgba, on) {
+                                    let _ = tray.set_icon(Some(icon));
+                                }
+                                let _ = tray.set_tooltip(Some(tooltip(on)));
+                            }
                         }
                         WorkerCmd::Shutdown => PostQuitMessage(0),
                     }
@@ -99,25 +107,43 @@ pub fn run(
     }
 }
 
+/// The icon as it should look for the current state.
+fn tray_icon(icon_rgba: &(Vec<u8>, u32, u32), enabled: bool) -> Option<Icon> {
+    let (rgba, width, height) = icon_rgba;
+    let data = if enabled {
+        rgba.clone()
+    } else {
+        crate::assets::dimmed(rgba)
+    };
+    Icon::from_rgba(data, *width, *height).ok()
+}
+
+fn tooltip(enabled: bool) -> &'static str {
+    if enabled {
+        "rasklad"
+    } else {
+        "rasklad - hotkey off"
+    }
+}
+
 /// Add the notification-area icon, waiting for the shell to be ready.
 ///
 /// Started by the logon task the process can come up before Explorer has
 /// created the notification area; `Shell_NotifyIcon` then fails with E_FAIL.
 /// That is a matter of a second or two, so retry instead of dying: a panic
 /// here greeted the user with a crash dialog on every logon.
-fn add_tray_icon(icon_rgba: (Vec<u8>, u32, u32), menu: Menu) -> Option<TrayIcon> {
-    let (rgba, width, height) = icon_rgba;
+fn add_tray_icon(icon_rgba: (Vec<u8>, u32, u32), menu: Menu, enabled: bool) -> Option<TrayIcon> {
     for attempt in 1..=80 {
-        let icon = match Icon::from_rgba(rgba.clone(), width, height) {
-            Ok(icon) => icon,
-            Err(e) => {
-                crate::diag::log(&format!("tray icon data rejected: {e:?}"));
+        let icon = match tray_icon(&icon_rgba, enabled) {
+            Some(icon) => icon,
+            None => {
+                crate::diag::log("tray icon data rejected");
                 return None;
             }
         };
         match TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
-            .with_tooltip("rasklad")
+            .with_tooltip(tooltip(enabled))
             .with_icon(icon)
             .with_menu_on_left_click(false)
             .build()
