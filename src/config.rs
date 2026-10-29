@@ -81,15 +81,18 @@ impl<'de> Deserialize<'de> for AutostartMethod {
 }
 
 /// Which modifier+Caps combo toggles Caps Lock mode. The bare Caps key is
-/// normally the layout-switch hotkey, so caps mode itself needs a combo —
-/// Shift+Caps Lock is the Windows default.
+/// normally the layout-switch hotkey, so caps mode itself needs a combo.
+///
+/// Windows has no default of its own; `Win+Caps` is ours because it is the
+/// one combination that does not collide with anything Windows or a common
+/// application already does with Shift, Ctrl or Alt.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CapsCombo {
     Off,
-    #[default]
     Shift,
     Ctrl,
     Alt,
+    #[default]
     Win,
 }
 
@@ -204,7 +207,7 @@ impl Default for Config {
             enabled: true,
             hotkey: Hotkey::default(),
             autostart: AutostartMethod::None,
-            caps_combo: CapsCombo::Shift,
+            caps_combo: CapsCombo::default(),
             start_minimized: true,
         }
     }
@@ -674,6 +677,17 @@ pub use imp::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fresh_config_uses_win_caps() {
+        // The documented default; changing it should be a decision, not an
+        // accident in an enum reorder.
+        assert_eq!(Config::default().caps_combo, CapsCombo::Win);
+        assert_eq!(CapsCombo::default(), CapsCombo::Win);
+        // And a config written before the field existed gets the same.
+        let cfg: Config = serde_json::from_str(r#"{"hotkey":{"vk":20}}"#).unwrap();
+        assert_eq!(cfg.caps_combo, CapsCombo::Win);
+    }
 
     #[test]
     fn the_preview_matches_what_will_be_written() {

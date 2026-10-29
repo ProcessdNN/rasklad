@@ -34,8 +34,8 @@ settings. It is one exe with no installer, no runtime and no network access.
   foreground window to activate the next layout instead of pressing
   `Alt+Shift` for you. It works on installs where that chord is unbound and
   only `Win+Space` is left, and no language overlay appears.
-- **Caps Lock mode on your terms.** `Shift+Caps` by default, or `Ctrl`, `Alt`,
-  `Win`, or nothing at all.
+- **Caps Lock mode on your terms.** `Win+Caps` by default, or `Shift`, `Ctrl`,
+  `Alt`, or nothing at all.
 - **Autostart, checked.** Registry, Startup folder or a scheduled task. On
   every start the entry is read back: a dead one is recreated, one that points
   at another build is reported in the window.
