@@ -27,6 +27,7 @@ pub enum WorkerCmd {
 pub const WM_WAKEUP: u32 = WM_APP + 1;
 
 pub mod menu_id {
+    pub const SETTINGS: &str = "rasklad.settings";
     pub const ENABLED: &str = "rasklad.enabled";
     pub const QUIT: &str = "rasklad.quit";
 }
@@ -62,9 +63,16 @@ pub fn run(
     unsafe {
         let enabled = shared.config.lock().unwrap().enabled;
         let menu = Menu::new();
+        let mi_settings = MenuItem::with_id(menu_id::SETTINGS, "Settings…", true, None);
         let mi_enabled = CheckMenuItem::with_id(menu_id::ENABLED, "Enabled", true, enabled, None);
         let mi_quit = MenuItem::with_id(menu_id::QUIT, "Quit", true, None);
-        let _ = menu.append_items(&[&mi_enabled, &PredefinedMenuItem::separator(), &mi_quit]);
+        let _ = menu.append_items(&[
+            &mi_settings,
+            &PredefinedMenuItem::separator(),
+            &mi_enabled,
+            &PredefinedMenuItem::separator(),
+            &mi_quit,
+        ]);
 
         let _tray = add_tray_icon(icon_rgba.clone(), menu, enabled);
 

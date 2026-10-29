@@ -1176,6 +1176,9 @@ fn spawn_events(
         }
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
             match ev.id.0.as_str() {
+                // The same thing a left click does, spelled out: opening the
+                // window from the menu is not something to guess at.
+                menu_id::SETTINGS => show(&ctx),
                 menu_id::ENABLED => {
                     let on = !shared.config.lock().unwrap().enabled;
                     worker::set_enabled(&shared, &cmds, on);
