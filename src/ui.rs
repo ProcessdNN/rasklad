@@ -165,6 +165,33 @@ impl Drop for PendingGuard {
     }
 }
 
+/// Colour for a warning that has to stay readable on either background.
+fn warn_color(ui: &egui::Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        egui::Color32::from_rgb(240, 180, 90)
+    } else {
+        egui::Color32::from_rgb(145, 90, 0)
+    }
+}
+
+/// Same for errors: the dark theme's light red disappears on a white panel.
+fn error_color(ui: &egui::Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        egui::Color32::LIGHT_RED
+    } else {
+        egui::Color32::from_rgb(170, 30, 30)
+    }
+}
+
+/// A hint that should not draw attention.
+fn quiet_color(ui: &egui::Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        egui::Color32::from_rgb(150, 150, 150)
+    } else {
+        egui::Color32::from_rgb(110, 110, 110)
+    }
+}
+
 /// Space kept under the last widget of a child window.
 const WINDOW_BOTTOM_PADDING: f32 = 12.0;
 
@@ -726,7 +753,7 @@ impl App {
                     if sel != AutostartMethod::None && !sel.requires_admin() {
                         ui.add_space(8.0);
                         ui.colored_label(
-                            egui::Color32::from_rgb(240, 180, 90),
+                            warn_color(ui),
                             "Starts without administrator rights. The scheduled task is the only \
                              method that starts elevated, and it does so without a UAC prompt.",
                         );
@@ -736,7 +763,7 @@ impl App {
                         ui.add_space(6.0);
                         let needs_uac = sel.requires_admin() && !elevation::is_elevated();
                         ui.colored_label(
-                            egui::Color32::from_rgb(150, 150, 150),
+                            quiet_color(ui),
                             if needs_uac {
                                 "Waiting for the UAC prompt…"
                             } else {
@@ -746,11 +773,11 @@ impl App {
                     }
                     if let Some(note) = &self.autostart_note {
                         ui.add_space(6.0);
-                        ui.colored_label(egui::Color32::from_rgb(240, 180, 90), note.as_str());
+                        ui.colored_label(warn_color(ui), note.as_str());
                     }
                     if let Some(err) = self.shared.autostart_error.lock().unwrap().as_deref() {
                         ui.add_space(6.0);
-                        ui.colored_label(egui::Color32::LIGHT_RED, err);
+                        ui.colored_label(error_color(ui), err);
                     }
                     fit_height(ctx, ui, width);
                 });
@@ -1006,7 +1033,7 @@ impl eframe::App for App {
             if self.recording {
                 if let Some(hint) = &self.record_hint {
                     ui.add_space(2.0);
-                    ui.colored_label(egui::Color32::from_rgb(240, 180, 90), hint.as_str());
+                    ui.colored_label(warn_color(ui), hint.as_str());
                 }
             }
 
@@ -1032,7 +1059,7 @@ impl eframe::App for App {
                     }
                 });
                 if let Some(err) = &self.admin_status {
-                    ui.colored_label(egui::Color32::LIGHT_RED, err.as_str());
+                    ui.colored_label(error_color(ui), err.as_str());
                 }
             }
 
@@ -1186,6 +1213,13 @@ pub fn run(
             // Only explanatory text is selectable; button/field labels aren't.
             cc.egui_ctx
                 .style_mut(|s| s.interaction.selectable_labels = false);
+            // Follow the Windows theme instead of always drawing a dark panel.
+            cc.egui_ctx
+                .set_visuals(if crate::winshow::system_uses_light_theme() {
+                    egui::Visuals::light()
+                } else {
+                    egui::Visuals::dark()
+                });
             spawn_events(
                 cc.egui_ctx.clone(),
                 shared.clone(),

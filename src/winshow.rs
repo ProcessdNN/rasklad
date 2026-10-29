@@ -134,6 +134,21 @@ pub fn hide_main_window_if_visible() -> bool {
     }
 }
 
+/// True when Windows is set to its light theme.
+///
+/// The window follows the system setting once, at startup: switching the
+/// theme while rasklad runs is picked up on the next launch, since reacting
+/// to it would mean listening for WM_SETTINGCHANGE in the egui loop.
+pub fn system_uses_light_theme() -> bool {
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    winreg::RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|key| key.get_value::<u32, _>("AppsUseLightTheme"))
+        .map(|light| light != 0)
+        .unwrap_or(false)
+}
+
 /// Open a folder in Explorer. Returns false when the shell refused.
 pub fn open_folder(path: &std::path::Path) -> bool {
     use windows::core::{w, HSTRING, PCWSTR};
